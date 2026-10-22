@@ -1,0 +1,1875 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Estudio · Video</title>
+<link rel="stylesheet" href="estudio-tema.css"><!-- tema único del estudio: tokens --est-* y componentes .est-* -->
+<script src="estudio-iconos.js"></script><!-- juego único de íconos de la interfaz: icono("nombre") -->
+<script src="estudio-movil.js" defer></script><!-- teléfono: paneles en cajones, cabecera deslizable -->
+<!--
+  EDITOR DE VIDEO del estudio (línea de tiempo con pistas, al estilo de Kdenlive y CapCut) — hermano de
+  editor.html (piezas) y media.html (fotos y videos sueltos). Un solo archivo + el servidor local
+  (servidor/servidor.py), que aporta el banco (y la Fototeca, bajo Qillqa), los tokens, las plantillas de
+  marca y el render: el proyecto se manda como lista de decisiones de edición (JSON) y servidor/montaje.py
+  arma UNA orden de ffmpeg (trim, setpts, escala y recorte, overlay, transiciones, títulos ASS, mezcla,
+  −14 LUFS). La vista previa de aquí imita las mismas reglas (sección «Compositor»). También puede exportar
+  en el navegador con ffmpeg.wasm (vendor/ffmpeg/, se carga solo al elegirlo).
+  Ningún color se escribe aquí: el cromo usa --est-* y las piezas, los colores de los tokens (/api/video-config).
+-->
+<style>
+  *{box-sizing:border-box;}
+  html,body{margin:0; height:100%; overflow:hidden;}
+  body{display:grid; grid-template-rows:var(--est-alto-cabecera) 1fr var(--est-alto-estado);}
+  #app{display:grid; min-height:0; grid-template-columns:var(--est-ancho-panel-izq) 1fr var(--est-ancho-panel-der);
+    grid-template-rows:minmax(200px,1fr) 6px var(--alto-linea,300px);}
+  #izq{grid-row:1; grid-column:1; border-right:1px solid var(--est-borde); min-height:0;}
+  #centro{grid-row:1; grid-column:2; display:flex; flex-direction:column; min-width:0; min-height:0;}
+  #der{grid-row:1; grid-column:3; border-left:1px solid var(--est-borde); min-height:0;}
+  #divisor{grid-row:2; grid-column:1 / -1; cursor:row-resize; background:var(--est-sup-2); border-top:1px solid var(--est-borde);}
+  #divisor:hover{background:var(--est-sup-hover);}
+  #linea{grid-row:3; grid-column:1 / -1; min-height:0;}
+  /* teléfono: visor arriba y línea de tiempo abajo; los paneles, en cajones (estudio-movil.js). Ver y exportar. */
+  @media (max-width:760px){
+    #app{grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(160px,42vh) 6px 1fr; }
+    #linea,#centro{min-width:0;}
+    #app{--est-ancho-cabeza-pista:148px;} .est-pista__cabeza .nombre{display:none;}
+    .est-pista__cabeza .est-boton{min-height:28px; min-width:26px;}
+    #centro{grid-column:1;}
+    #herr-linea{overflow-x:auto; scrollbar-width:none;} #herr-linea > *{flex:none;}
+    #herr-linea input[type=range]{width:90px;}
+    #transporte{overflow-x:auto;} #aviso-visor{display:none;}
+  }
+
+  /* ---------- visor ---------- */
+  #visor{flex:1; min-height:0; position:relative; display:grid; place-items:center; overflow:hidden;}
+  #marco-lienzo{position:relative; box-shadow:var(--est-sombra-lienzo);}
+  #marco-lienzo canvas{position:absolute; inset:0; width:100%; height:100%;}
+  #lienzo{background:var(--exc-negro);}
+  #capa-guia{pointer-events:none;}
+  #transporte{display:flex; align-items:center; gap:var(--est-esp-1); padding:4px var(--est-esp-2);
+    background:var(--est-sup-2); border-top:1px solid var(--est-borde); flex:none;}
+  #tc{font:var(--est-peso-medio) var(--est-fs-md)/1 var(--est-fuente-mono); color:var(--est-texto); min-width:120px;}
+  #tc small{color:var(--est-texto-3); font-size:var(--est-fs-sm);}
+
+  /* ---------- paneles ---------- */
+  .est-panel__cuerpo{display:flex; flex-direction:column; gap:var(--est-esp-2);}
+  .lista-medios{display:grid; grid-template-columns:repeat(2,1fr); gap:6px;}
+  .medio{position:relative; aspect-ratio:16/10; border-radius:var(--est-radio-sm); overflow:hidden; cursor:grab;
+    background:var(--est-sup-3); border:1px solid var(--est-borde-control);}
+  .medio:hover{border-color:var(--est-acento-linea);}
+  .medio img,.medio video{width:100%; height:100%; object-fit:cover; display:block; pointer-events:none;}
+  .medio .ico-tipo{position:absolute; inset:0; display:grid; place-items:center; color:var(--est-texto-3);}
+  .medio .ico-tipo .ico{width:28px; height:28px;}
+  .medio span{position:absolute; left:0; right:0; bottom:0; padding:2px 5px; font-size:10px; color:var(--est-texto);
+    background:color-mix(in srgb,var(--est-sup-0) 78%,transparent); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .medio b{position:absolute; top:3px; right:3px; font:var(--est-peso-fuerte) 10px/1 var(--est-fuente-mono);
+    padding:2px 4px; border-radius:var(--est-radio-sm); background:color-mix(in srgb,var(--est-sup-0) 78%,transparent);}
+  .boton-bloque{width:100%; justify-content:flex-start; height:auto; min-height:var(--est-alto-control); padding:6px 10px;
+    text-align:left; white-space:normal; line-height:1.3;}
+  .boton-bloque small{display:block; color:var(--est-texto-3); font-size:var(--est-fs-xs); font-weight:400;}
+  .rejilla2{display:grid; grid-template-columns:1fr 1fr; gap:6px;}
+  .est-fila input:not([type=checkbox]),.est-fila select{flex:1; min-width:0;}
+  .est-fila output{min-width:38px; text-align:right; color:var(--est-texto-2); font-size:var(--est-fs-xs);
+    font-variant-numeric:tabular-nums;}
+  textarea{width:100%; resize:vertical; min-height:64px;}
+  .vacio{color:var(--est-texto-3); font-size:var(--est-fs-sm); padding:var(--est-esp-2) 0;}
+  .barra-progreso{height:6px; border-radius:var(--est-radio-redondo); background:var(--est-sup-4); overflow:hidden;}
+  .barra-progreso i{display:block; height:100%; width:0; background:var(--est-acento-linea); transition:width .3s;}
+  .miniatura-marca{aspect-ratio:1; background:var(--est-sup-1); border-radius:var(--est-radio-sm); overflow:hidden;
+    border:1px solid var(--est-borde-control); cursor:pointer; position:relative;}
+  .miniatura-marca img{width:100%; height:100%; object-fit:contain;}
+  .miniatura-marca span{position:absolute; left:0; right:0; bottom:0; font-size:10px; padding:2px 4px;
+    background:color-mix(in srgb,var(--est-sup-0) 78%,transparent);}
+  .miniatura-marca:hover{border-color:var(--est-acento-linea);}
+
+  /* ---------- línea de tiempo ---------- */
+  #herr-linea{display:flex; align-items:center; gap:2px; padding:3px var(--est-esp-2); border-bottom:1px solid var(--est-borde); flex:none;}
+  #herr-linea input[type=range]{width:120px;}
+  #tl-scroll{flex:1; overflow:auto; position:relative; min-height:0;}
+  #tl-interior{position:relative; min-width:100%;}
+  #tl-regla{position:sticky; top:0; z-index:8; height:24px; display:flex; background:var(--est-sup-2); border-bottom:1px solid var(--est-borde);}
+  #tl-regla .esquina{position:sticky; left:0; z-index:9; width:var(--est-ancho-cabeza-pista); flex:none; background:var(--est-sup-3);
+    border-right:1px solid var(--est-borde); display:flex; align-items:center; gap:2px; padding:0 4px;}
+  #tl-regla canvas{display:block; cursor:text;}
+  .est-pista{position:relative;}
+  .est-pista.texto{--alto:36px;} .est-pista.video{--alto:56px;} .est-pista.audio{--alto:48px;}
+  .est-pista{height:var(--alto);}
+  .est-pista__cabeza{position:sticky; left:0; z-index:6; justify-content:space-between;}
+  .est-pista__cabeza .nombre{flex:1; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; cursor:text;}
+  .est-pista__cabeza .est-boton{color:var(--est-texto-3);}
+  .est-pista__cabeza .est-boton.on{color:var(--est-peligro); background:transparent;}
+  .est-pista__carril.destino{background:var(--est-sup-3);}
+  .est-clip{padding:0; display:flex; flex-direction:column; user-select:none; top:3px; bottom:3px;}
+  .est-clip .tira{position:absolute; inset:0; display:flex; overflow:hidden; pointer-events:none; opacity:.5; z-index:0;}
+  .est-clip .tira img{height:100%; flex:none; object-fit:cover; display:block;}
+  .est-clip.sel .tira{opacity:.35;}
+  .est-pista.bloqueada .est-pista__carril{background-image:repeating-linear-gradient(135deg,transparent 0 8px,color-mix(in srgb,var(--est-texto) 6%,transparent) 8px 9px);}
+  .est-pista.bloqueada .est-clip{cursor:not-allowed;}
+  .est-pista.bloqueada .est-clip .asa{display:none;}
+  .est-pista__cabeza .est-boton.solo{font:var(--est-peso-fuerte) var(--est-fs-xs)/1 var(--est-fuente-mono);}
+  .est-pista__cabeza .est-boton.solo.on{color:var(--est-aviso);}
+  .est-clip .rotulo{padding:2px 6px; overflow:hidden; text-overflow:ellipsis; position:relative; z-index:2; pointer-events:none;
+    display:flex; gap:4px; align-items:center;}
+  .est-clip .rotulo .ico{width:12px; height:12px;}
+  .est-clip canvas.onda{position:absolute; left:0; bottom:0; width:100%; height:60%; pointer-events:none; opacity:.85;}
+  .est-clip.video,.est-clip.imagen{border-left:3px solid var(--est-acento-linea);}
+  .est-clip.texto{background:var(--est-aviso-suave); border-color:color-mix(in srgb,var(--est-aviso) 50%,transparent);}
+  .est-clip.audio{background:var(--est-exito-suave); border-color:color-mix(in srgb,var(--est-exito) 45%,transparent);}
+  .est-clip.sel{background:var(--est-acento-suave);}
+  .est-clip .asa{position:absolute; top:0; bottom:0; width:7px; z-index:3; cursor:ew-resize;}
+  .est-clip .asa.izq{left:0;} .est-clip .asa.der{right:0;}
+  .est-clip .asa:hover{background:color-mix(in srgb,var(--est-texto) 25%,transparent);}
+  .est-clip .trans{position:absolute; left:0; top:0; bottom:0; z-index:1; pointer-events:none;
+    background:linear-gradient(to right,color-mix(in srgb,var(--est-texto) 30%,transparent),transparent);}
+  .est-clip .fundido{position:absolute; top:0; bottom:0; z-index:1; pointer-events:none;
+    background:color-mix(in srgb,var(--est-sup-0) 45%,transparent);}
+  .est-clip.oculto{opacity:.4;}
+  #cabezal{top:0; height:100%; z-index:7;}
+  .marcador{position:absolute; top:0; width:0; height:100%; border-left:1px dashed var(--est-aviso); z-index:4; pointer-events:none;}
+  #banda-sel{position:absolute; z-index:9; border:1px solid var(--est-seleccion); background:var(--est-seleccion-suave); pointer-events:none; display:none;}
+  .guia-iman{position:absolute; top:0; height:100%; width:0; border-left:1px solid var(--est-aviso); z-index:8; pointer-events:none; display:none;}
+
+  #pestanas-izq{overflow-x:auto; scrollbar-width:none; gap:0;}
+  #pestanas-izq .est-pestana{padding:10px 6px; flex:none;}
+  .est-toast.on{opacity:1;}
+  .modal-ancho{width:min(560px,92vw);}
+  .pie-modal{display:flex; justify-content:flex-end; gap:6px; margin-top:var(--est-esp-4);}
+  .est-menu{display:none;} .est-menu.on{display:block;}
+  .oculto{display:none !important;}
+</style>
+</head>
+<body data-movil-izq="#izq" data-movil-der="#der">
+<header class="est-cabecera">
+  <div class="est-cabecera__titulo">Video <span class="est-cabecera__sub" id="nombre-proyecto">Sin título</span></div>
+  <div class="est-grupo">
+    <button class="est-boton est-boton--icono" id="b-deshacer" title="Deshacer (Ctrl+Z)"><i class="ico" data-ico="deshacer"></i></button>
+    <button class="est-boton est-boton--icono" id="b-rehacer" title="Rehacer (Ctrl+Shift+Z)"><i class="ico" data-ico="rehacer"></i></button>
+  </div>
+  <span class="est-sep"></span>
+  <div class="est-segmentado" id="aspectos" title="Formato del proyecto"></div>
+  <span class="est-empuje"></span>
+  <a class="est-boton" href="media.html" title="Revelar una foto o recortar un video suelto"><i class="ico" data-ico="imagen"></i>Fotos y videos</a>
+  <a class="est-boton" href="editor.html" title="Piezas de diseño"><i class="ico" data-ico="plantillas"></i>Piezas</a>
+  <span class="est-sep"></span>
+  <button class="est-boton" id="b-abrir"><i class="ico" data-ico="carpeta"></i>Abrir</button>
+  <button class="est-boton" id="b-guardar" title="Guardar (Ctrl+S)"><i class="ico" data-ico="guardar"></i>Guardar</button>
+  <button class="est-boton est-boton--primario" id="b-exportar"><i class="ico" data-ico="descargar"></i>Exportar</button>
+</header>
+
+<div id="app">
+  <aside id="izq" class="est-panel">
+    <div class="est-pestanas" id="pestanas-izq">
+      <button class="est-pestana on" data-p="medios">Medios</button>
+      <button class="est-pestana" data-p="texto">Texto</button>
+      <button class="est-pestana" data-p="marca">Marca</button>
+      <button class="est-pestana" data-p="subs">Subtítulos</button>
+      <button class="est-pestana" data-p="proyecto">Proyecto</button>
+    </div>
+    <div class="est-panel__cuerpo" id="p-medios">
+      <div class="est-fila" style="margin:0">
+        <input type="search" id="buscar-medio" placeholder="Buscar en el banco…">
+        <button class="est-boton est-boton--icono est-boton--borde" id="b-subir" title="Subir video, foto o audio"><i class="ico" data-ico="subir"></i></button>
+        <button class="est-boton est-boton--icono" id="b-refrescar" title="Refrescar el banco"><i class="ico" data-ico="refrescar"></i></button>
+      </div>
+      <input type="file" id="archivo" accept="video/*,image/*,audio/*" multiple hidden>
+      <div class="est-segmentado" id="filtro-medio">
+        <button class="on" data-f="videos">Videos</button><button data-f="imagenes">Fotos</button><button data-f="audios">Audio</button>
+      </div>
+      <div class="est-nota">Arrastra a la línea de tiempo o haz doble clic para ponerlo en el cabezal.</div>
+      <div class="lista-medios" id="lista-medios"></div>
+    </div>
+    <div class="est-panel__cuerpo oculto" id="p-texto">
+      <div class="est-seccion__titulo">Títulos de la marca</div>
+      <button class="est-boton est-boton--borde boton-bloque" data-texto="titular"><i class="ico" data-ico="texto"></i><span>Titular<small>Frase principal, tipografía de titulares</small></span></button>
+      <button class="est-boton est-boton--borde boton-bloque" data-texto="rotulo"><i class="ico" data-ico="propiedades"></i><span>Rótulo nombre / cargo<small>Franja inferior de quien habla</small></span></button>
+      <button class="est-boton est-boton--borde boton-bloque" data-texto="subtitulo"><i class="ico" data-ico="subtitulos"></i><span>Subtítulo<small>Texto al pie, con contorno</small></span></button>
+      <button class="est-boton est-boton--borde boton-bloque" data-texto="libre"><i class="ico" data-ico="pluma"></i><span>Texto libre</span></button>
+      <div class="est-nota">Los títulos se componen con libass al exportar (como los cortes verticales de shorts.py). La vista previa usa los mismos archivos de fuente y los mismos saltos de línea; el contorno puede diferir en un píxel.</div>
+    </div>
+    <div class="est-panel__cuerpo oculto" id="p-marca">
+      <div class="est-seccion__titulo">Marcos, bandas y logos del perfil</div>
+      <div class="rejilla2" id="lista-marca"></div>
+      <label class="est-fila"><input type="checkbox" id="ver-zonas"> Zonas seguras de redes (9:16)</label>
+      <div class="est-nota">Un marco o una banda se pone en la pista de superposición durante todo el video; un logo, pequeño en una esquina.</div>
+    </div>
+    <div class="est-panel__cuerpo oculto" id="p-subs">
+      <div class="est-seccion__titulo">Subtítulos automáticos</div>
+      <div class="est-nota" id="subs-origen">Elige en la línea de tiempo el clip de video o audio con la voz.</div>
+      <div class="est-fila"><label>Modelo</label><select id="subs-modelo">
+        <option value="tiny">Muy rápido (tiny)</option><option value="base">Rápido (base)</option>
+        <option value="small" selected>Equilibrado (small)</option><option value="medium">Preciso (medium)</option></select></div>
+      <div class="est-fila"><label>Idioma</label><select id="subs-idioma"><option value="es" selected>Español</option></select></div>
+      <div class="est-nota" id="subs-idioma-nota"></div>
+      <div class="est-fila"><label>Estilo</label><select id="subs-estilo">
+        <option value="palabra">Palabra a palabra resaltada</option><option value="frase">Frase completa</option></select></div>
+      <div class="est-fila"><label>Altura</label><input type="range" id="subs-y" min="0.5" max="0.95" step="0.01" value="0.78"><output id="subs-y-o">78%</output></div>
+      <button class="est-boton est-boton--primario" id="b-subtitular"><i class="ico" data-ico="mejora"></i>Subtítulos automáticos</button>
+      <div class="barra-progreso oculto" id="subs-barra"><i></i></div>
+      <div class="est-nota" id="subs-estado"></div>
+      <div class="est-nota">Whisper corre en esta computadora (uno a la vez, con prioridad baja). Cada frase queda como un clip de texto editable en la pista «Subtítulos».</div>
+    </div>
+    <div class="est-panel__cuerpo oculto" id="p-proyecto">
+      <div class="est-fila"><label>Nombre</label><input type="text" id="pr-nombre" maxlength="80"></div>
+      <div class="est-fila"><label>Resolución</label><select id="pr-res"><option value="1080">1080 p</option><option value="720">720 p</option></select></div>
+      <div class="est-fila"><label>Cuadros/s</label><select id="pr-fps"><option>24</option><option>25</option><option selected>30</option><option>50</option><option>60</option></select></div>
+      <div class="est-fila"><label>Tamaño</label><span id="pr-tam" class="est-cifra" style="text-align:left"></span></div>
+      <div class="est-seccion__titulo" style="margin-top:8px">Pistas</div>
+      <div class="rejilla2">
+        <button class="est-boton est-boton--borde" data-pista="video"><i class="ico" data-ico="mas"></i>Video</button>
+        <button class="est-boton est-boton--borde" data-pista="texto"><i class="ico" data-ico="mas"></i>Texto</button>
+        <button class="est-boton est-boton--borde" data-pista="audio"><i class="ico" data-ico="mas"></i>Audio</button>
+        <button class="est-boton" id="b-nuevo"><i class="ico" data-ico="papelera"></i>Proyecto nuevo</button>
+      </div>
+      <div class="est-seccion__titulo" style="margin-top:8px">Atajos</div>
+      <div class="est-nota" style="line-height:1.9">
+        <kbd>Espacio</kbd> reproducir · <kbd>J</kbd><kbd>K</kbd><kbd>L</kbd> atrás, pausa, adelante ·
+        <kbd>←</kbd><kbd>→</kbd> cuadro (<kbd>Mayús</kbd> 1 s) · <kbd>↑</kbd><kbd>↓</kbd> corte anterior/siguiente ·
+        <kbd>S</kbd> dividir · <kbd>Supr</kbd> borrar · <kbd>Mayús</kbd>+<kbd>Supr</kbd> borrar y cerrar el hueco ·
+        <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>X</kbd>/<kbd>V</kbd> · <kbd>Ctrl</kbd>+<kbd>A</kbd> todo ·
+        <kbd>M</kbd> marcador · <kbd>+</kbd><kbd>−</kbd> zoom · <kbd>Z</kbd> ajustar · <kbd>R</kbd> modo ondulado ·
+        <kbd>Ctrl</kbd>+<kbd>S</kbd> guardar
+      </div>
+    </div>
+  </aside>
+
+  <main id="centro">
+    <div id="visor" class="est-lienzo">
+      <div id="marco-lienzo"><canvas id="lienzo"></canvas><canvas id="capa-guia"></canvas></div>
+    </div>
+    <div id="transporte">
+      <button class="est-boton est-boton--icono" id="b-inicio" title="Al inicio (Inicio)"><i class="ico" data-ico="marca-inicio"></i></button>
+      <button class="est-boton est-boton--icono" id="b-play" title="Reproducir (Espacio)"><i class="ico" data-ico="reproducir"></i></button>
+      <button class="est-boton est-boton--icono" id="b-fin" title="Al final (Fin)"><i class="ico" data-ico="marca-fin"></i></button>
+      <span id="tc">0:00.00 <small>/ 0:00.00</small></span>
+      <span class="est-empuje"></span>
+      <span class="est-nota" id="aviso-visor"></span>
+      <button class="est-boton est-boton--icono" id="b-zonas" title="Zonas seguras de redes"><i class="ico" data-ico="zonas"></i></button>
+      <select id="calidad-vista" title="Calidad de la vista previa" style="width:auto"><option value="1">Vista completa</option><option value="0.5" selected>Vista ½</option><option value="0.33">Vista ⅓</option></select>
+    </div>
+  </main>
+
+  <aside id="der" class="est-panel">
+    <div class="est-panel__cabecera"><span class="est-panel__titulo"><i class="ico ico--sm" data-ico="propiedades"></i>Propiedades</span></div>
+    <div class="est-panel__cuerpo" id="propiedades"></div>
+  </aside>
+
+  <div id="divisor" title="Arrastra para cambiar el alto de la línea de tiempo"></div>
+
+  <section id="linea" class="est-linea-tiempo">
+    <div id="herr-linea">
+      <button class="est-boton est-boton--icono" id="b-dividir" title="Dividir en el cabezal (S)"><i class="ico" data-ico="cortar"></i></button>
+      <button class="est-boton est-boton--icono" id="b-borrar" title="Borrar (Supr) — con Mayús cierra el hueco"><i class="ico" data-ico="papelera"></i></button>
+      <button class="est-boton est-boton--icono" id="b-marcador" title="Marcador (M)"><i class="ico" data-ico="bandera"></i></button>
+      <span class="est-sep"></span>
+      <button class="est-boton est-boton--icono on" id="b-iman" title="Imán: ajustar a cortes, cabezal y marcadores" aria-pressed="true"><i class="ico" data-ico="iman"></i></button>
+      <button class="est-boton" id="b-ondulado" title="Modo ondulado (R): recortar o borrar mueve lo que sigue" aria-pressed="false"><i class="ico" data-ico="capas"></i>Ondulado</button>
+      <span class="est-empuje"></span>
+      <span class="est-nota" id="sel-info"></span>
+      <span class="est-sep"></span>
+      <button class="est-boton est-boton--icono" id="b-alejar" title="Alejar (−)"><i class="ico" data-ico="alejar"></i></button>
+      <input type="range" id="zoom" min="0" max="1" step="0.001" title="Zoom de la línea de tiempo">
+      <button class="est-boton est-boton--icono" id="b-acercar" title="Acercar (+)"><i class="ico" data-ico="acercar"></i></button>
+      <button class="est-boton est-boton--icono" id="b-ajustar" title="Ver todo (Z)"><i class="ico" data-ico="ajustar"></i></button>
+    </div>
+    <div id="tl-scroll">
+      <div id="tl-interior">
+        <div id="tl-regla"><div class="esquina"><span class="est-nota">Pistas</span></div><canvas id="regla"></canvas></div>
+        <div id="pistas"></div>
+        <div id="banda-sel"></div>
+        <div class="guia-iman" id="guia-iman"></div>
+        <div class="est-cabezal" id="cabezal"></div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<footer class="est-estado">
+  <span id="est-guardado"><i class="ico ico--sm" data-ico="guardar"></i><b>Sin cambios</b></span>
+  <span id="est-formato"></span>
+  <span id="est-duracion"></span>
+  <span id="est-herr"></span>
+</footer>
+
+<div class="est-modal-fondo" id="modal-fondo"><div class="est-modal modal-ancho" id="modal"></div></div>
+<div class="est-toast" id="toast"></div>
+<script>
+"use strict";
+/* ==================================================================================================== *
+ *  Editor de video · secciones: Util · Configuración · Proyecto · Historial · Medios · Compositor ·      *
+ *  Reproducción · Línea de tiempo · Edición · Propiedades · Paneles · Subtítulos · Guardar · Exportar ·  *
+ *  Teclado · Arranque                                                                                 *
+ * ==================================================================================================== */
+
+/* ---------------- Util ---------------- */
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+/* Rutas RELATIVAS a esta página: sirve igual en la raíz (127.0.0.1:8099/video.html) que detrás de Qillqa
+   (/estudio/video.html). api("/api/x") → "<carpeta de la página>/api/x". */
+const BASE = location.pathname.replace(/[^/]*$/, "");
+const api = p => BASE + String(p).replace(/^\//, "");
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const esc = t => String(t ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const uid = () => Math.random().toString(36).slice(2, 9);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const EPS = 1e-6;
+function toast(msg, ms = 2800){ const t = $("#toast"); t.textContent = msg; t.classList.add("on");
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("on"), ms); }
+function fmtT(s, fps){ s = Math.max(0, s || 0); const m = Math.floor(s / 60), r = s - m * 60;
+  const cs = fps ? String(Math.floor((r % 1) * fps + 1e-6)).padStart(2, "0") : String(Math.floor((r % 1) * 100)).padStart(2, "0");
+  return m + ":" + String(Math.floor(r)).padStart(2, "0") + (fps ? ":" : ".") + cs; }
+async function jget(p){ const r = await fetch(api(p)); if(!r.ok) throw new Error(r.status); return r.json(); }
+async function jpost(p, cuerpo){
+  const r = await fetch(api(p), {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(cuerpo)});
+  let d = null; try{ d = await r.json(); }catch(_){ }
+  if(!r.ok || !d || d.ok === false) throw new Error((d && d.error) || ("HTTP " + r.status));
+  return d;
+}
+/* Los medios vienen del servidor con su URL pública («/banco/…» o «/estudio/banco/…» bajo Qillqa). */
+const urlMedio = u => u;
+
+/* ---------------- Configuración (tokens, plantillas, redes) ---------------- */
+let CFG = {colores:{}, zonas:{}, plantillas:{}, insumos:{}, fuentes:{}, textos:{}};
+let VCFG = {redes:{}, canales:[], marca:{colores:{}}, fuentes:[], ffmpeg:false, whisper:false};
+let BANCO = {imagenes:[], videos:[], audios:[]};
+const ASPECTOS = {
+  "9:16": {nombre:"9:16", w:1080, h:1920, sub:"Reels, TikTok, estados"},
+  "1:1":  {nombre:"1:1",  w:1080, h:1080, sub:"Feed cuadrado"},
+  "4:5":  {nombre:"4:5",  w:1080, h:1350, sub:"Feed vertical"},
+  "16:9": {nombre:"16:9", w:1920, h:1080, sub:"YouTube, X, prensa"},
+};
+/* Métricas de libass por familia (de /api/video-config → tipografias, leídas de los MISMOS archivos que usa el
+   render): escala = cuerpo en px por cada px de \fs (unitsPerEm / (winAscent + winDescent)), asc = dónde cae la
+   línea base dentro del alto de línea. Sin ellas (servidor anterior), una aproximación. */
+const METRICAS = {};
+function metrica(fam){ return METRICAS[fam] || {escala:0.78, asc:0.8}; }
+function colorRol(rol){ return (VCFG.marca.colores || {})[rol] || css("--est-texto"); }
+function fuenteTitular(){ return VCFG.marca.fuente_titular || "Archivo Black"; }
+function fuenteTexto(){ return VCFG.marca.fuente_texto || "Source Sans 3"; }
+
+async function cargarConfig(){
+  try{ CFG = await jget("/api/design"); }catch(_){ }
+  try{ VCFG = await jget("/api/video-config"); }catch(_){ }
+  CFG.plantillas = CFG.plantillas || {}; CFG.insumos = CFG.insumos || {}; CFG.zonas = CFG.zonas || {};
+  CFG.textos = CFG.textos || {};
+  // Las tipografías del render (las del perfil y las de la marca instaladas en el servidor) entran al lienzo con
+  // FontFace, con su familia tipográfica y la de legado (la que pide el ASS: «Archivo Black»), como fontconfig.
+  const cargas = [];
+  for(const f of VCFG.tipografias || []){
+    for(const fam of [f.familia, f.familia_legado].filter(Boolean)){
+      if(f.escala_ass && !METRICAS[fam]) METRICAS[fam] = {escala:f.escala_ass, asc:f.ascenso_ass || 0.8};
+      const ff = new FontFace(fam, `url("${f.url}")`, {weight:String(f.peso || 400), style:f.cursiva ? "italic" : "normal"});
+      cargas.push(ff.load().then(x => document.fonts.add(x)).catch(() => {}));
+    }
+  }
+  await Promise.all(cargas);
+}
+async function cargarBanco(){
+  try{ BANCO = await jget("/api/media"); }catch(_){ BANCO = {imagenes:[], videos:[], audios:[]}; }
+  BANCO.audios = BANCO.audios || [];
+  pintarBanco();
+}
+
+/* ---------------- Proyecto ---------------- */
+/* Modelo = el que lee servidor/montaje.py (ver su cabecera): pistas en orden de pantalla (arriba → abajo). */
+function proyectoNuevo(){
+  return {v:1, nombre:"", aspecto:"9:16", res:1080, ancho:1080, alto:1920, fps:30,
+    pistas:[
+      {id:"t1", tipo:"texto", nombre:"Títulos"},
+      {id:"t2", tipo:"texto", nombre:"Subtítulos"},
+      {id:"v2", tipo:"video", nombre:"Superposición"},
+      {id:"v1", tipo:"video", nombre:"Video"},
+      {id:"a1", tipo:"audio", nombre:"Audio"},
+      {id:"a2", tipo:"audio", nombre:"Música"},
+    ],
+    clips:[], marcadores:[]};
+}
+let P = proyectoNuevo();
+const U = {sel:new Set(), t:0, pps:60, iman:true, ondulado:false, reproduciendo:false, velocidad:1,
+  zonas:false, portapapeles:null, sucio:false, calidad:0.5};
+const pista = id => P.pistas.find(p => p.id === id);
+const clip = id => P.clips.find(c => c.id === id);
+const finClip = c => c.inicio + c.duracion;
+const duracionTotal = () => Math.max(0, ...P.clips.filter(c => !(pista(c.pista) || {}).oculta).map(finClip));
+const visual = c => c.tipo === "video" || c.tipo === "imagen";
+const conMedio = c => c.tipo !== "texto";
+const pistaPara = tipo => tipo === "texto" ? "texto" : tipo === "audio" ? "audio" : "video";
+function clipBase(tipo, extra){
+  return Object.assign({id:uid(), pista:"", tipo, origen:"", nombre:"", inicio:0, duracion:3, entrada:0,
+    velocidad:1, volumen:1, silencio:false, fundido_entrada:0, fundido_salida:0, opacidad:1,
+    ajustes:{br:100, ct:100, sat:100}, recorte:{x:0, y:0, w:1, h:1}, encaje:"cubrir",
+    kb:{ini:{escala:1, x:0, y:0}, fin:{escala:1, x:0, y:0}}, transicion:null, ducking:false}, extra || {});
+}
+function aplicarAspecto(clave, res){
+  const a = ASPECTOS[clave] || ASPECTOS["9:16"];
+  P.aspecto = clave; P.res = res || P.res || 1080;
+  const k = P.res === 720 ? 2 / 3 : 1;
+  P.ancho = Math.round(a.w * k / 2) * 2; P.alto = Math.round(a.h * k / 2) * 2;
+}
+
+/* ---------------- Historial (deshacer / rehacer) ---------------- */
+const Hist = {
+  pila:[], pos:-1,
+  foto(){ return JSON.stringify(P); },
+  marcar(){ const f = this.foto(); if(this.pila[this.pos] === f) return;
+    this.pila = this.pila.slice(0, this.pos + 1); this.pila.push(f);
+    if(this.pila.length > 120) this.pila.shift(); this.pos = this.pila.length - 1;
+    U.sucio = true; Guardado.programar(); },
+  aplicar(f){ P = JSON.parse(f); Cuadros.vaciar(); U.sel = new Set([...U.sel].filter(id => clip(id))); refrescarTodo(); },
+  atras(){ if(this.pos > 0){ this.pos--; this.aplicar(this.pila[this.pos]); Guardado.programar(); } },
+  adelante(){ if(this.pos < this.pila.length - 1){ this.pos++; this.aplicar(this.pila[this.pos]); Guardado.programar(); } },
+  reiniciar(){ this.pila = [this.foto()]; this.pos = 0; },
+};
+/* Cambio terminado: queda en el historial y se repinta lo necesario. */
+function cambio(opts){ Cuadros.vaciar(); Hist.marcar(); if(!(opts && opts.sinLinea)) pintarLinea(); if(!(opts && opts.sinProps)) pintarPropiedades();
+  pedirCuadro(); pintarEstado(); }
+
+/* ---------------- Medios (metadatos, elementos y ondas) ---------------- */
+const MED = {};            // url → {tipo, nombre, dur, w, h, listo:Promise}
+function tipoDeUrl(url){ const u = url.split("?")[0].toLowerCase();
+  if(/\.(mp4|mov|webm|m4v)$/.test(u)) return "video"; if(/\.(mp3|m4a|wav|ogg|aac|flac)$/.test(u)) return "audio"; return "imagen"; }
+function sondear(url, tipo, nombre){
+  if(MED[url]) return MED[url].listo;
+  const m = MED[url] = {tipo:tipo || tipoDeUrl(url), nombre:nombre || decodeURIComponent(url.split("/").pop()), dur:0, w:0, h:0};
+  m.listo = new Promise(res => {
+    if(m.tipo === "imagen"){ const im = new Image(); im.onload = () => { m.w = im.naturalWidth; m.h = im.naturalHeight; m.el = im; res(m); };
+      im.onerror = () => res(m); im.src = urlMedio(url); return; }
+    const el = document.createElement(m.tipo === "audio" ? "audio" : "video"); el.preload = "metadata"; el.muted = true;
+    el.onloadedmetadata = () => { m.dur = el.duration || 0; m.w = el.videoWidth || 0; m.h = el.videoHeight || 0; res(m); el.src = ""; };
+    el.onerror = () => res(m); el.src = urlMedio(url);
+  });
+  return m.listo;
+}
+/* Un elemento por clip (cada uno con su tiempo y su velocidad); las imágenes se comparten. */
+const ELS = new Map();
+let actx = null;
+function audioCtx(){ if(!actx){ try{ actx = new AudioContext(); }catch(_){ } } if(actx && actx.state === "suspended") actx.resume(); return actx; }
+function elemento(c){
+  if(c.tipo === "imagen"){ const m = MED[c.origen]; return m && m.el; }
+  let e = ELS.get(c.id);
+  if(e && e.origen === c.origen) return e.el;
+  if(e) liberar(c.id);
+  const el = document.createElement(c.tipo === "audio" ? "audio" : "video");
+  el.preload = "auto"; el.playsInline = true; el.src = urlMedio(c.origen);
+  el.onseeked = () => pedirCuadro();
+  el.onloadeddata = () => pedirCuadro();
+  e = {el, origen:c.origen, gain:null};
+  const ctx = audioCtx();
+  if(ctx){ try{ const src = ctx.createMediaElementSource(el); e.gain = ctx.createGain(); src.connect(e.gain).connect(ctx.destination); }catch(_){ } }
+  if(!e.gain) el.muted = true;
+  ELS.set(c.id, e);
+  return el;
+}
+function liberar(id){ const e = ELS.get(id); if(!e) return; try{ e.el.pause(); e.el.removeAttribute("src"); e.el.load(); }catch(_){ } ELS.delete(id); }
+
+const ONDAS = {};          // url → {picos:Float32Array, porSeg} | Promise | null
+const PICOS_SEG = 100;
+function onda(url){
+  if(url in ONDAS) return ONDAS[url] instanceof Promise ? null : ONDAS[url];
+  ONDAS[url] = (async () => {
+    try{
+      const r = await fetch(urlMedio(url)); const largo = +r.headers.get("content-length") || 0;
+      if(largo > 250 * 1024 * 1024) return null;          // archivos enormes: sin onda (memoria)
+      const buf = await r.arrayBuffer();
+      const ctx = new OfflineAudioContext(1, 1, 8000);
+      const audio = await ctx.decodeAudioData(buf);
+      const datos = audio.getChannelData(0), paso = Math.max(1, Math.floor(audio.sampleRate / PICOS_SEG));
+      const picos = new Float32Array(Math.ceil(datos.length / paso));
+      for(let i = 0; i < picos.length; i++){ let mx = 0; const fin = Math.min(datos.length, (i + 1) * paso);
+        for(let j = i * paso; j < fin; j += 4){ const v = Math.abs(datos[j]); if(v > mx) mx = v; } picos[i] = mx; }
+      let pico = 0; for(const v of picos) if(v > pico) pico = v;
+      if(pico > 0) for(let i = 0; i < picos.length; i++) picos[i] /= pico;
+      return {picos, porSeg:audio.sampleRate / paso};
+    }catch(_){ return null; }
+  })().then(v => { ONDAS[url] = v; pintarLinea(); return v; });
+  return null;
+}
+
+/* ---------------- Compositor (vista previa: mismas reglas que servidor/montaje.py) ---------------- */
+const CONTIGUO = 0.05;
+const TAM_DEFECTO = {titular:0.062, rotulo:0.036, subtitulo:0.05, libre:0.045};
+/* planificarTransiciones: copia de montaje.planificar_transiciones. */
+function planificarTransiciones(){
+  const plan = {};
+  for(const c of P.clips) plan[c.id] = {ext:0, fi:c.fundido_entrada || 0, fo:c.fundido_salida || 0, entra:null, dEntra:0, afi:c.fundido_entrada || 0, afo:c.fundido_salida || 0, aext:0};
+  const porPista = {};
+  for(const c of P.clips) (porPista[c.pista] = porPista[c.pista] || []).push(c);
+  for(const lista of Object.values(porPista)){
+    lista.sort((a, b) => a.inicio - b.inicio);
+    lista.forEach((b, k) => {
+      const tr = b.transicion; if(!tr || !(tr.dur > 0.04)) return;
+      const d = Math.min(tr.dur, b.duracion * 0.9);
+      const a = lista.slice(0, k).reverse().find(x => Math.abs(finClip(x) - b.inicio) < CONTIGUO);
+      const pb = plan[b.id];
+      if(tr.tipo === "negro"){ pb.fi = Math.max(pb.fi, d / 2); pb.afi = Math.max(pb.afi, d / 2);
+        if(a){ plan[a.id].fo = Math.max(plan[a.id].fo, Math.min(d / 2, a.duracion)); plan[a.id].afo = Math.max(plan[a.id].afo, Math.min(d / 2, a.duracion)); }
+        return; }
+      pb.afi = Math.max(pb.afi, d);
+      if(tr.tipo === "fundido") pb.fi = Math.max(pb.fi, d); else { pb.entra = tr.tipo; pb.dEntra = d; }
+      if(a){ plan[a.id].ext = Math.max(plan[a.id].ext, d); plan[a.id].aext = Math.max(plan[a.id].aext, d); }
+    });
+  }
+  return plan;
+}
+function alfaFundido(local, dur, fi, fo){
+  let a = 1;
+  if(fi > 0.01) a *= clamp(local / fi, 0, 1);
+  if(fo > 0.01) a *= clamp((dur - local) / fo, 0, 1);
+  return a;
+}
+/* Geometría de un clip visual en el cuadro W×H en su tiempo local (cubrir/contener × Ken Burns + deslizar). */
+function geometria(c, local, p, sw, sh, W, H){
+  const rc = c.recorte || {x:0, y:0, w:1, h:1};
+  const cw = Math.max(2, sw * rc.w), ch = Math.max(2, sh * rc.h);
+  const s0 = (c.encaje === "contener" ? Math.min : Math.max)(W / cw, H / ch);
+  const k = clamp(local / Math.max(c.duracion, EPS), 0, 1);
+  const a = c.kb.ini, b = c.kb.fin || c.kb.ini;
+  const e = a.escala + (b.escala - a.escala) * k;
+  const dw = cw * s0 * e, dh = ch * s0 * e;
+  let x = (W - dw) / 2 + (a.x + (b.x - a.x) * k) * W;
+  const y = (H - dh) / 2 + (a.y + (b.y - a.y) * k) * H;
+  if(p && p.entra === "deslizar") x += W * (1 - clamp(local / p.dEntra, 0, 1));
+  return {sx:sw * rc.x, sy:sh * rc.y, cw, ch, x, y, dw, dh};
+}
+function tamTexto(t, W, H){ return t.tam || Math.round(TAM_DEFECTO[t.estilo || "libre"] * (H >= W ? H : H * 1.4)); }
+/* En ASS el tamaño (\fs) es el alto de línea (winAscent + winDescent); en el lienzo, el cuerpo: metrica().escala.
+   Pesos como el ASS de montaje.py: el rótulo (nombre) va en el estilo Titulo sin negrita; el resto, en negrita
+   (\b1 o el estilo Texto, que es negrita). */
+function fuenteCanvas(fam, peso, tam){ return `${peso} ${tam * metrica(fam).escala}px "${fam}", sans-serif`; }
+function estiloTexto(t){
+  if(t.estilo === "titular") return {fam:fuenteTitular(), peso:700};
+  return {fam:fuenteTexto(), peso:700};
+}
+
+function dibujarTexto(ctx, c, local, alfa, W, H){
+  const t = c.texto || {}; const tam = tamTexto(t, W, H);
+  const x = (t.x ?? 0.5) * W, y = (t.y ?? 0.5) * H;
+  const col = t.color ? colorRol(t.color) : colorRol("texto");
+  ctx.save(); ctx.globalAlpha = alfa; ctx.textBaseline = "alphabetic"; ctx.textAlign = "left";
+  if(t.estilo === "rotulo"){
+    // \an1–3: la línea apoya su borde inferior en y (el cargo, debajo); caja opaca = BorderStyle 3 con \bord.
+    const tc = Math.max(12, Math.floor(tam * 0.72));
+    const lineas = [{txt:" " + (t.contenido || "") + " ", fam:fuenteTitular(), peso:400, tam, base:y, fondo:colorRol("marca"), color:col, pad:Math.max(6, Math.floor(tam / 4))},
+      t.cargo ? {txt:" " + t.cargo + " ", fam:fuenteTexto(), peso:700, tam:tc, base:y + Math.floor(tam * 0.55) + tc, fondo:colorRol("acento"), color:colorRol("fondo"), pad:Math.max(5, Math.floor(tc / 4))} : null];
+    const al = t.alinear || "izq";
+    lineas.forEach(l => { if(!l) return;
+      ctx.font = fuenteCanvas(l.fam, l.peso, l.tam);
+      const w = ctx.measureText(l.txt).width;
+      const x0 = al === "izq" ? x : al === "der" ? x - w : x - w / 2;
+      ctx.fillStyle = l.fondo; ctx.fillRect(x0 - l.pad, l.base - l.tam - l.pad, w + 2 * l.pad, l.tam + 2 * l.pad);
+      ctx.fillStyle = l.color; ctx.fillText(l.txt, x0, l.base - l.tam + metrica(l.fam).asc * l.tam); });
+    ctx.restore(); return;
+  }
+  const {fam, peso} = estiloTexto(t);
+  ctx.font = fuenteCanvas(fam, peso, tam);
+  // Palabras con su tiempo (subtítulos): la que suena en acento.
+  let palabras = null, actual = -1;
+  if(t.palabras && t.palabras.length && !(t.contenido || "").trim()){
+    palabras = t.palabras.map(p => p.p);
+    if(t.resaltado === "palabra") t.palabras.forEach((p, i) => { const sig = t.palabras[i + 1];
+      if(local >= p.i && local < (sig ? sig.i : p.f)) actual = i; });
+  }
+  const texto = palabras ? palabras.join(" ") : (t.contenido || "");
+  // Ancho de corte: el del cuadro (PlayResX − MarginL − MarginR, con márgenes 0 en el ASS), como libass.
+  const lineas = partirLineas(ctx, texto, W);
+  const alto = tam, al = t.alinear || "centro", asc = metrica(fam).asc * tam;
+  const y0 = y - lineas.length * alto / 2;           // \an4–6: el bloque centrado en y
+  lineas.forEach((ln, i) => {
+    const w = ctx.measureText(ln).width; const top = y0 + i * alto, base = top + asc;
+    const x0 = al === "izq" ? x : al === "der" ? x - w : x - w / 2;
+    if(t.caja){ const pad = Math.max(6, Math.floor(tam / 4)); ctx.save(); ctx.globalAlpha = alfa * 0.84;
+      ctx.fillStyle = colorRol("fondo"); ctx.fillRect(x0 - pad, top - pad, w + 2 * pad, tam + 2 * pad); ctx.restore(); }
+    if(t.estilo === "subtitulo" && !t.caja){ ctx.lineJoin = "round"; ctx.lineWidth = 2 * Math.max(2, Math.floor(tam / 18));
+      ctx.strokeStyle = colorRol("fondo"); ctx.strokeText(ln, x0, base); }
+    if(palabras && actual >= 0){
+      // Dibuja palabra por palabra para teñir la actual.
+      let xx = x0; const ws = ln.split(" "); const desde = lineas.slice(0, i).reduce((s, l) => s + l.split(" ").length, 0);
+      ws.forEach((wd, j) => { ctx.fillStyle = (desde + j) === actual ? colorRol("acento") : col; ctx.fillText(wd, xx, base);
+        xx += ctx.measureText(wd + " ").width; });
+    }else{ ctx.fillStyle = col; ctx.fillText(ln, x0, base); }
+  });
+  ctx.restore();
+}
+/* Saltos de línea de libass con WrapStyle 0 (el que escribe montaje.py): 1) voraz, se corta en el último espacio
+   antes de pasar el ancho; 2) reequilibrio: mientras pasar la última palabra de una línea a la siguiente acerque
+   sus anchos, se pasa (las líneas quedan parejas, la de arriba la más ancha). \N y los saltos del texto son
+   duros: no se mueven. Mide con el mismo archivo de fuente que usa el render. */
+function partirLineas(ctx, texto, ancho){
+  const out = [], anchoDe = ws => ctx.measureText(ws.join(" ")).width;
+  for(const parrafo of String(texto).split(/\n|\\N/)){
+    const palabras = parrafo.split(/ +/).filter(Boolean);
+    if(!palabras.length){ out.push(""); continue; }
+    const lineas = [[]];
+    for(const w of palabras){
+      const actual = lineas[lineas.length - 1];
+      if(actual.length && anchoDe([...actual, w]) > ancho) lineas.push([w]); else actual.push(w);
+    }
+    for(let vueltas = 0, movio = true; movio && vueltas < 60; vueltas++){
+      movio = false;
+      for(let i = 0; i + 1 < lineas.length; i++){
+        const a = lineas[i], b = lineas[i + 1]; if(a.length < 2) continue;
+        const l1 = anchoDe(a), l2 = anchoDe(b), n1 = anchoDe(a.slice(0, -1)), n2 = anchoDe([a[a.length - 1], ...b]);
+        if(Math.abs(n1 - n2) < Math.abs(l1 - l2)){ b.unshift(a.pop()); movio = true; }
+      }
+    }
+    out.push(...lineas.map(l => l.join(" ")));
+  }
+  return out;
+}
+
+/* Dibuja el cuadro del tiempo t en ctx (W×H del proyecto, escalado por `escala`). */
+function componer(ctx, t, escala){
+  const W = P.ancho, H = P.alto;
+  ctx.save(); ctx.setTransform(escala, 0, 0, escala, 0, 0);
+  ctx.fillStyle = css("--exc-negro") || "black"; ctx.fillRect(0, 0, W, H);
+  const plan = planificarTransiciones();
+  const pistasVideo = P.pistas.filter(p => p.tipo === "video" && !p.oculta).reverse();
+  for(const pv of pistasVideo){
+    const lista = P.clips.filter(c => c.pista === pv.id && visual(c)).sort((a, b) => a.inicio - b.inicio);
+    for(const c of lista){
+      const p = plan[c.id], local = t - c.inicio;
+      if(local < 0 || local >= c.duracion + p.ext) continue;
+      const el = elemento(c); if(!el) continue;
+      const sw = c.tipo === "imagen" ? el.naturalWidth : el.videoWidth, sh = c.tipo === "imagen" ? el.naturalHeight : el.videoHeight;
+      if(!sw || !sh || (c.tipo === "video" && el.readyState < 2)) continue;
+      let a = (c.opacidad ?? 1) * alfaFundido(local, c.duracion, p.fi, p.fo);
+      if(p.fo > 0.01 && local >= c.duracion) a = 0;
+      if(a <= 0.003) continue;
+      const g = geometria(c, Math.min(local, c.duracion), p, sw, sh, W, H);
+      ctx.save(); ctx.globalAlpha = a;
+      const aj = c.ajustes || {};
+      if((aj.br ?? 100) !== 100 || (aj.ct ?? 100) !== 100 || (aj.sat ?? 100) !== 100)
+        ctx.filter = `brightness(${(1 + ((aj.br ?? 100) - 100) / 100).toFixed(3)}) contrast(${((aj.ct ?? 100) / 100).toFixed(3)}) saturate(${((aj.sat ?? 100) / 100).toFixed(3)})`;
+      if(p.entra === "barrido" && local < p.dEntra){ ctx.beginPath(); ctx.rect(g.x, 0, g.dw * clamp(local / p.dEntra, 0, 1), H); ctx.clip(); }
+      try{ ctx.drawImage(el, g.sx, g.sy, g.cw, g.ch, g.x, g.y, g.dw, g.dh); }catch(_){ }
+      ctx.restore();
+    }
+  }
+  // Títulos: encima de todo, la pista de más arriba encima (como las capas del ASS).
+  const pistasTexto = P.pistas.filter(p => p.tipo === "texto" && !p.oculta).reverse();
+  for(const pt of pistasTexto){
+    for(const c of P.clips){
+      if(c.pista !== pt.id || c.tipo !== "texto") continue;
+      const local = t - c.inicio; if(local < 0 || local >= c.duracion) continue;
+      const p = plan[c.id];
+      dibujarTexto(ctx, c, local, (c.opacidad ?? 1) * alfaFundido(local, c.duracion, p.fi, p.fo), W, H);
+    }
+  }
+  ctx.restore();
+}
+</script>
+<script>
+"use strict";
+/* ---------------- Reproducción ---------------- */
+const lienzo = $("#lienzo"), guia = $("#capa-guia");
+let ctxL = lienzo.getContext("2d"), ctxG = guia.getContext("2d");
+let rafReproduccion = 0, rafCuadro = 0, reloj = {t0:0, perf0:0};
+
+/* Pista bloqueada: sus clips se eligen (para ver sus propiedades) pero no se mueven, recortan, dividen ni borran. */
+const bloqueado = c => !!(c && (pista(c.pista) || {}).bloqueada);
+function avisarBloqueo(){ toast("La pista está bloqueada: desbloquéala con el candado de su cabecera"); }
+/* Solo: si alguna pista con sonido está en «solo», suenan solo esas (montaje.py hace lo mismo al exportar). */
+function enmudecida(pp){ return !!pp.silencio || (P.pistas.some(q => q.solo && q.tipo !== "texto") && !pp.solo); }
+function hayVozEn(t){
+  return P.clips.some(c => !c.ducking && (c.tipo === "audio" || c.tipo === "video") && !c.silencio && !enmudecida(pista(c.pista) || {})
+    && t >= c.inicio && t < finClip(c) && (c.tipo === "audio" || (MED[c.origen] || {}).tipo === "video"));
+}
+/* Pone cada <video>/<audio> en su tiempo (y su volumen) para el instante t. */
+function sincronizar(t, enMarcha){
+  const plan = planificarTransiciones();
+  const voz = hayVozEn(t);
+  for(const c of P.clips){
+    if(c.tipo === "texto" || c.tipo === "imagen") continue;
+    const pp = pista(c.pista) || {}, p = plan[c.id];
+    const ext = Math.max(p.ext, p.aext), local = t - c.inicio;
+    const activo = local >= -0.25 && local < c.duracion + ext && !pp.oculta;
+    if(!activo){ const e = ELS.get(c.id); if(e && !e.el.paused) e.el.pause(); continue; }
+    const el = elemento(c), e = ELS.get(c.id);
+    const deseado = c.entrada + clamp(local, 0, c.duracion + ext) * c.velocidad;
+    if(e && e.gain){
+      let g = (c.silencio || enmudecida(pp)) ? 0 : c.volumen;
+      const l = Math.max(0, local);
+      if(p.afi > 0.01) g *= clamp(l / p.afi, 0, 1);
+      if(p.aext > 0.01){ if(l > c.duracion) g *= clamp(1 - (l - c.duracion) / p.aext, 0, 1); }
+      else if(p.afo > 0.01) g *= clamp((c.duracion - l) / p.afo, 0, 1);
+      if(c.ducking && voz) g *= 0.3;
+      e.gain.gain.value = g;
+    }
+    if(enMarcha && local >= 0){
+      el.playbackRate = clamp(c.velocidad * U.velocidad, 0.0625, 16);
+      if(el.paused){ el.currentTime = deseado; el.play().catch(() => {}); }
+      else if(Math.abs(el.currentTime - deseado) > 0.25) el.currentTime = deseado;
+    }else{
+      if(!el.paused) el.pause();
+      if(Math.abs(el.currentTime - deseado) > 0.015) el.currentTime = deseado;
+    }
+  }
+}
+/* Caché de cuadros compuestos (la vista previa ya dibujada), por número de cuadro: J (hacia atrás) vuelve a
+   mostrar lo recién visto sin buscar en el video. Se vacía con cada cambio del proyecto o del tamaño del visor. */
+const Cuadros = {
+  mapa:new Map(), version:0, max:90,
+  clave(t){ return Math.round(t * P.fps); },
+  guardar(t){
+    if(!window.createImageBitmap || !listosEn(t)) return;
+    const k = this.clave(t), v = this.version; if(this.mapa.has(k)) return;
+    createImageBitmap(lienzo).then(b => {
+      if(v !== this.version){ b.close && b.close(); return; }
+      this.mapa.set(k, b);
+      while(this.mapa.size > this.max){ const [k0, b0] = this.mapa.entries().next().value; b0.close && b0.close(); this.mapa.delete(k0); }
+    }).catch(() => {});
+  },
+  tomar(t){ return this.mapa.get(this.clave(t)) || null; },
+  vaciar(){ for(const b of this.mapa.values()) b.close && b.close(); this.mapa.clear(); this.version++; },
+};
+/* ¿Los videos que se ven en t ya tienen su cuadro (ni buscando ni sin datos)? */
+function activosEn(t){
+  return P.clips.filter(c => c.tipo === "video" && !(pista(c.pista) || {}).oculta && t >= c.inicio && t < finClip(c) + 0.05)
+    .map(c => ELS.get(c.id)).filter(Boolean).map(e => e.el);
+}
+function listosEn(t){ return activosEn(t).every(el => !el.seeking && el.readyState >= 2); }
+/* Espera a que los videos activos terminen de buscar y presenten su cuadro (requestVideoFrameCallback si el
+   navegador lo tiene), con un tope para no colgarse en un medio lento. */
+function esperarCuadros(t, tope){
+  const espera = activosEn(t).filter(el => el.seeking || el.readyState < 2).map(el => new Promise(ok => {
+    const listo = () => { el.removeEventListener("seeked", alBuscar); ok(); };
+    const alBuscar = () => el.requestVideoFrameCallback ? el.requestVideoFrameCallback(listo) : listo();
+    el.addEventListener("seeked", alBuscar);
+  }));
+  return Promise.race([Promise.all(espera), new Promise(ok => setTimeout(ok, tope || 300))]);
+}
+/* Hacia atrás (J): el navegador no reproduce video en reversa; se avanza cuadro a cuadro hacia atrás al ritmo del
+   reloj, buscando cada cuadro y esperando a que esté (o tomándolo de la caché), en vez de pintar lo que hubiera. */
+async function bucleAtras(){
+  const id = ++U.idAtras;
+  let previo = performance.now();
+  while(U.reproduciendo && U.velocidad < 0 && id === U.idAtras){
+    const ahora = performance.now();
+    let t = U.t + (ahora - previo) / 1000 * U.velocidad; previo = ahora;
+    t = Math.floor(t * P.fps) / P.fps;
+    if(t <= 0){ U.t = 0; pausar(); moverCabezal(); return; }
+    U.t = t;
+    const b = Cuadros.tomar(t);
+    if(b){ ctxL.drawImage(b, 0, 0, lienzo.width, lienzo.height); dibujarGuias(); pintarTc(); }
+    else{ sincronizar(t, false); await esperarCuadros(t, 250); if(id !== U.idAtras || !U.reproduciendo) return;
+      dibujarCuadro(); Cuadros.guardar(t); }
+    moverCabezal(true);
+    await new Promise(r => requestAnimationFrame(r));
+  }
+}
+function reproducir(vel){
+  audioCtx();
+  if(U.t >= duracionTotal() - 0.02 && (vel || 1) > 0) U.t = 0;
+  U.velocidad = vel || 1; U.reproduciendo = true;
+  reloj = {t0:U.t, perf0:performance.now()};
+  $("#b-play").innerHTML = icono("pausa");
+  cancelAnimationFrame(rafReproduccion); U.idAtras = (U.idAtras || 0) + 1;
+  if(U.velocidad < 0){ for(const e of ELS.values()) if(!e.el.paused) e.el.pause(); bucleAtras(); }
+  else bucle();
+}
+function pausar(){
+  U.reproduciendo = false; cancelAnimationFrame(rafReproduccion); U.idAtras = (U.idAtras || 0) + 1;
+  for(const e of ELS.values()) if(!e.el.paused) e.el.pause();
+  $("#b-play").innerHTML = icono("reproducir");
+  sincronizar(U.t, false); pedirCuadro();
+}
+function bucle(){
+  if(!U.reproduciendo) return;
+  let t = reloj.t0 + (performance.now() - reloj.perf0) / 1000 * U.velocidad;
+  const fin = duracionTotal();
+  if(U.velocidad > 0 && t >= fin){ U.t = fin; pausar(); moverCabezal(); return; }
+  if(U.velocidad < 0 && t <= 0){ U.t = 0; pausar(); moverCabezal(); return; }
+  U.t = t;
+  sincronizar(t, U.velocidad > 0);
+  dibujarCuadro(); Cuadros.guardar(t); moverCabezal(true);
+  rafReproduccion = requestAnimationFrame(bucle);
+}
+function irA(t, seguir){
+  U.t = clamp(Math.round(t * P.fps) / P.fps, 0, Math.max(duracionTotal(), 0));
+  if(U.reproduciendo) reloj = {t0:U.t, perf0:performance.now()};
+  else sincronizar(U.t, false);
+  moverCabezal(seguir); pedirCuadro();
+}
+
+/* ---------------- Visor ---------------- */
+function ajustarVisor(){
+  const v = $("#visor"), m = $("#marco-lienzo");
+  const aw = v.clientWidth - 24, ah = v.clientHeight - 24;
+  const k = Math.min(aw / P.ancho, ah / P.alto);
+  const w = Math.max(40, Math.floor(P.ancho * k)), h = Math.max(40, Math.floor(P.alto * k));
+  m.style.width = w + "px"; m.style.height = h + "px";
+  const q = U.calidad;
+  lienzo.width = Math.round(P.ancho * q); lienzo.height = Math.round(P.alto * q); Cuadros.vaciar();
+  const dpr = window.devicePixelRatio || 1;
+  guia.width = Math.round(w * dpr); guia.height = Math.round(h * dpr);
+  pedirCuadro();
+}
+/* En pausa se redibuja con un temporizador (no con requestAnimationFrame): el cuadro llega aunque la pestaña
+   esté en segundo plano o dentro de un marco que el navegador estrangula. */
+function pedirCuadro(){ if(U.reproduciendo) return; clearTimeout(rafCuadro); rafCuadro = setTimeout(dibujarCuadro, 16); }
+function dibujarCuadro(){
+  componer(ctxL, U.t, U.calidad);
+  dibujarGuias(); pintarTc();
+}
+function pintarTc(){ $("#tc").innerHTML = fmtT(U.t, P.fps) + " <small>/ " + fmtT(duracionTotal(), P.fps) + "</small>"; }
+/* Zonas seguras (las de los tokens, como media.html) y el recuadro de lo elegido: solo en pantalla. */
+function dibujarGuias(){
+  const g = ctxG, W = guia.width, H = guia.height, k = W / P.ancho;
+  g.clearRect(0, 0, W, H);
+  if(U.zonas){
+    const z = CFG.zonas || {}, ky = P.alto / 1920;
+    g.save(); g.fillStyle = css("--est-aviso-suave"); g.strokeStyle = css("--est-aviso"); g.lineWidth = 1; g.setLineDash([6, 4]);
+    const sup = (z.story_sup || 250) * ky * k, inf = (z.story_inf || 340) * ky * k, lat = (z.story_lat || 96) * k, der = (z.tiktok_der || 140) * k;
+    g.fillRect(0, 0, W, sup); g.fillRect(0, H - inf, W, inf); g.fillRect(W - der, sup, der, H - sup - inf);
+    g.strokeRect(lat, sup, W - lat - Math.max(lat, der), H - sup - inf);
+    g.restore();
+  }
+  const c = U.sel.size === 1 ? clip([...U.sel][0]) : null;
+  if(c && U.t >= c.inicio && U.t < finClip(c)){
+    const r = rectEnVisor(c, U.t);
+    if(r){ g.save(); g.strokeStyle = css("--est-seleccion"); g.lineWidth = 1.5; g.setLineDash([]);
+      g.strokeRect(r.x * k, r.y * k, r.w * k, r.h * k); g.restore(); }
+  }
+}
+/* Rectángulo (en px del proyecto) que ocupa un clip en el instante t. */
+function rectEnVisor(c, t){
+  const W = P.ancho, H = P.alto, local = t - c.inicio;
+  if(c.tipo === "texto"){
+    const tt = c.texto || {}, tam = tamTexto(tt, W, H);
+    const est = tt.estilo === "rotulo" ? {fam:fuenteTitular(), peso:400} : estiloTexto(tt);
+    ctxL.save(); ctxL.font = fuenteCanvas(est.fam, est.peso, tam);
+    const txt = tt.contenido || (tt.palabras || []).map(p => p.p).join(" ");
+    const lineas = tt.estilo === "rotulo" ? [txt] : partirLineas(ctxL, txt, W);
+    const w = Math.max(...lineas.map(l => ctxL.measureText(l).width), tam * 2); ctxL.restore();
+    const x = (tt.x ?? 0.5) * W, y = (tt.y ?? 0.5) * H, al = tt.alinear || (tt.estilo === "rotulo" ? "izq" : "centro");
+    const x0 = al === "izq" ? x : al === "der" ? x - w : x - w / 2;
+    return tt.estilo === "rotulo" ? {x:x0, y:y - tam, w, h:tam * 2.2} : {x:x0, y:y - lineas.length * tam / 2, w, h:lineas.length * tam};
+  }
+  if(!visual(c)) return null;
+  const m = MED[c.origen]; if(!m || !m.w) return null;
+  const g = geometria(c, clamp(local, 0, c.duracion), null, m.w, m.h, W, H);
+  return {x:g.x, y:g.y, w:g.dw, h:g.dh};
+}
+
+/* Arrastrar en el visor mueve lo elegido (texto: su posición; video o foto: el cuadro clave más cercano del
+   Ken Burns, o los dos si no hay movimiento); la rueda cambia la escala. */
+(function manipulacionDirecta(){
+  const m = $("#marco-lienzo");
+  let arr = null;
+  function clipBajo(px, py){
+    const plan = planificarTransiciones();
+    const orden = [...P.pistas.filter(p => p.tipo === "texto"), ...P.pistas.filter(p => p.tipo === "video")];
+    for(const pt of orden){ if(pt.oculta) continue;
+      const cand = P.clips.filter(c => c.pista === pt.id && U.t >= c.inicio && U.t < finClip(c)).reverse();
+      for(const c of cand){ const r = rectEnVisor(c, U.t);
+        if(r && px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) return c; } }
+    return null;
+  }
+  function claves(c){ // qué cuadros clave mueve el gesto
+    const kb = c.kb, igual = JSON.stringify(kb.ini) === JSON.stringify(kb.fin);
+    if(igual) return [kb.ini, kb.fin];
+    return [(U.t - c.inicio) < c.duracion / 2 ? kb.ini : kb.fin];
+  }
+  m.addEventListener("pointerdown", ev => {
+    const k = m.clientWidth / P.ancho, px = ev.offsetX / k, py = ev.offsetY / k;
+    let c = U.sel.size === 1 ? clip([...U.sel][0]) : null;
+    const r = c && rectEnVisor(c, U.t);
+    if(!(r && px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h)){
+      c = clipBajo(px, py); U.sel = new Set(c ? [c.id] : []); pintarLinea(); pintarPropiedades(); pedirCuadro();
+    }
+    if(!c) return;
+    if(bloqueado(c)){ avisarBloqueo(); return; }
+    m.setPointerCapture(ev.pointerId);
+    arr = {c, x:px, y:py, orig:JSON.parse(JSON.stringify(c.tipo === "texto" ? c.texto : c.kb))};
+  });
+  m.addEventListener("pointermove", ev => {
+    if(!arr) return;
+    const k = m.clientWidth / P.ancho, dx = (ev.offsetX / k - arr.x) / P.ancho, dy = (ev.offsetY / k - arr.y) / P.alto;
+    const c = arr.c;
+    if(c.tipo === "texto"){ c.texto.x = clamp(arr.orig.x + dx, 0, 1); c.texto.y = clamp(arr.orig.y + dy, 0, 1); }
+    else { c.kb = JSON.parse(JSON.stringify(arr.orig)); for(const kf of claves(c)){ kf.x = clamp(kf.x + dx, -2, 2); kf.y = clamp(kf.y + dy, -2, 2); } }
+    pedirCuadro();
+  });
+  m.addEventListener("pointerup", () => { if(arr){ arr = null; cambio({sinLinea:true}); } });
+  m.addEventListener("wheel", ev => {
+    const c = U.sel.size === 1 ? clip([...U.sel][0]) : null; if(!c || bloqueado(c)) return;
+    ev.preventDefault();
+    const f = ev.deltaY < 0 ? 1.04 : 1 / 1.04;
+    if(c.tipo === "texto"){ c.texto.tam = clamp(Math.round(tamTexto(c.texto, P.ancho, P.alto) * f), 8, 400); }
+    else for(const kf of claves(c)) kf.escala = clamp(kf.escala * f, 0.1, 8);
+    pedirCuadro(); clearTimeout(m._h); m._h = setTimeout(() => cambio({sinLinea:true}), 300);
+  }, {passive:false});
+})();
+</script>
+<script>
+"use strict";
+/* ---------------- Línea de tiempo ---------------- */
+const CABEZA = () => parseFloat(css("--est-ancho-cabeza-pista")) || 168;
+const PPS_MIN = 4, PPS_MAX = 400;
+const ICONO_CLIP = {video:"video", imagen:"imagen", audio:"musica", texto:"texto"};
+function anchoLinea(){ return Math.max($("#tl-scroll").clientWidth - CABEZA(), (Math.max(duracionTotal(), 10) + 20) * U.pps); }
+
+function pintarLinea(){
+  const ancho = anchoLinea();
+  $("#tl-interior").style.width = (ancho + CABEZA()) + "px";
+  const cont = $("#pistas"); const plan = planificarTransiciones();
+  cont.innerHTML = P.pistas.map(p => {
+    const clips = P.clips.filter(c => c.pista === p.id).map(c => htmlClip(c, plan[c.id])).join("");
+    const botones = [
+      p.tipo !== "audio" ? `<button class="est-boton est-boton--icono est-boton--sm ${p.oculta ? "on" : ""}" data-acc="ocultar" title="${p.oculta ? "Mostrar" : "Ocultar"} la pista">${icono(p.oculta ? "ojo-cerrado" : "ojo")}</button>` : "",
+      p.tipo !== "texto" ? `<button class="est-boton est-boton--icono est-boton--sm ${p.silencio ? "on" : ""}" data-acc="silencio" title="${p.silencio ? "Activar" : "Silenciar"} el audio (mute)" aria-pressed="${!!p.silencio}">${icono(p.silencio ? "silencio" : "volumen")}</button>` : "",
+      p.tipo !== "texto" ? `<button class="est-boton est-boton--icono est-boton--sm solo ${p.solo ? "on" : ""}" data-acc="solo" title="Solo: escuchar solo esta pista (y las demás en solo)" aria-pressed="${!!p.solo}">S</button>` : "",
+      `<button class="est-boton est-boton--icono est-boton--sm ${p.bloqueada ? "on" : ""}" data-acc="bloquear" title="${p.bloqueada ? "Desbloquear" : "Bloquear"} la pista (no se mueve, recorta ni borra)" aria-pressed="${!!p.bloqueada}">${icono(p.bloqueada ? "candado" : "candado-abierto", "ico--sm")}</button>`,
+      `<button class="est-boton est-boton--icono est-boton--sm" data-acc="quitar" title="Quitar la pista (si está vacía)">${icono("cerrar", "ico--sm")}</button>`,
+    ].join("");
+    return `<div class="est-pista ${p.tipo}${p.bloqueada ? " bloqueada" : ""}" data-pista="${p.id}">
+      <div class="est-pista__cabeza">${icono(p.tipo === "audio" ? "musica" : p.tipo === "texto" ? "texto" : "pelicula", "ico--sm")}
+        <span class="nombre" title="Doble clic para renombrar">${esc(p.nombre || p.id)}</span>${botones}</div>
+      <div class="est-pista__carril" style="width:${ancho}px">${clips}
+        ${P.marcadores.map(m => `<div class="marcador" style="left:${m.t * U.pps}px"></div>`).join("")}</div></div>`;
+  }).join("");
+  for(const cv of cont.querySelectorAll("canvas.onda")) dibujarOnda(cv, clip(cv.dataset.id));
+  pintarRegla(); moverCabezal(); pintarSelInfo();
+}
+function htmlClip(c, p){
+  const x = c.inicio * U.pps, w = Math.max(3, c.duracion * U.pps);
+  const nombre = c.tipo === "texto" ? (c.texto && (c.texto.contenido || (c.texto.palabras || []).map(q => q.p).join(" "))) || "Texto" : (c.nombre || (MED[c.origen] || {}).nombre || "clip");
+  const vel = Math.abs(c.velocidad - 1) > 0.001 ? ` <b>${c.velocidad}×</b>` : "";
+  const oculto = (pista(c.pista) || {}).oculta ? " oculto" : "";
+  const audio = c.tipo === "audio" || (c.tipo === "video" && (MED[c.origen] || {}).tipo === "video");
+  const tr = c.transicion && c.transicion.dur > 0 ? `<div class="trans" style="width:${Math.min(w, c.transicion.dur * U.pps)}px" title="Transición: ${c.transicion.tipo}"></div>` : "";
+  const fi = p && p.fi > 0.01 && !c.transicion ? `<div class="fundido" style="left:0;width:${p.fi * U.pps}px"></div>` : "";
+  const fo = p && p.fo > 0.01 ? `<div class="fundido" style="right:0;width:${p.fo * U.pps}px"></div>` : "";
+  return `<div class="est-clip ${c.tipo}${U.sel.has(c.id) ? " sel" : ""}${oculto}" data-id="${c.id}" style="left:${x}px;width:${w}px"
+    title="${esc(nombre)} · ${fmtT(c.inicio)}–${fmtT(finClip(c))}">${tr}${fi}${fo}
+    ${tiraMiniaturas(c, w)}
+    <div class="rotulo">${icono(ICONO_CLIP[c.tipo], "ico--sm")}${esc(nombre)}${vel}</div>
+    ${audio && c.tipo !== "texto" ? `<canvas class="onda" data-id="${c.id}"></canvas>` : ""}
+    <div class="asa izq"></div><div class="asa der"></div></div>`;
+}
+/* Fotogramas del clip a lo largo de su ancho (GET api/fotograma: ffmpeg en el servidor, con caché; el navegador
+   los guarda una hora). Una imagen fija: su miniatura repetida. Sin ffmpeg, la imagen falla y no se muestra. */
+function tiraMiniaturas(c, w){
+  if(c.tipo !== "video" && c.tipo !== "imagen") return "";
+  const m = MED[c.origen] || {}, altoPx = 48;
+  const aspecto = m.w && m.h ? m.w / m.h : 16 / 9, paso = Math.max(24, Math.round(altoPx * aspecto));
+  const n = Math.min(40, Math.max(1, Math.ceil(w / paso)));
+  const fuente = i => {
+    if(c.tipo === "imagen") return miniatura(c.origen);
+    const seg = c.entrada + (i * paso / U.pps) * c.velocidad, tope = m.dur ? Math.max(0, m.dur - 0.1) : seg;
+    const grano = U.pps >= 30 ? 0.5 : U.pps >= 8 ? 2 : 5;                    // menos cuadros distintos al alejar
+    const t = Math.min(tope, Math.round(seg / grano) * grano);
+    return api("/api/fotograma?origen=" + encodeURIComponent(c.origen) + "&t=" + t.toFixed(1) + "&alto=" + altoPx);
+  };
+  return `<div class="tira" aria-hidden="true">${Array.from({length:n}, (_, i) =>
+    `<img loading="lazy" decoding="async" alt="" style="width:${paso}px" src="${esc(fuente(i))}" onerror="this.remove()">`).join("")}</div>`;
+}
+function dibujarOnda(cv, c){
+  if(!c) return;
+  const o = onda(c.origen); if(!o) return;
+  const w = Math.min(4000, Math.max(2, Math.round(c.duracion * U.pps))), h = 24;
+  cv.width = w; cv.height = h;
+  const g = cv.getContext("2d"); g.fillStyle = c.tipo === "audio" ? css("--est-exito") : css("--est-texto-3");
+  const vol = c.silencio ? 0 : Math.min(2, c.volumen);
+  for(let x = 0; x < w; x++){
+    const s = c.entrada + (x / U.pps) * c.velocidad, i = Math.floor(s * o.porSeg);
+    const j = Math.floor((c.entrada + ((x + 1) / U.pps) * c.velocidad) * o.porSeg);
+    let mx = 0; for(let k = i; k <= Math.max(i, j - 1) && k < o.picos.length; k++) if(o.picos[k] > mx) mx = o.picos[k];
+    const a = Math.min(h, mx * vol * h); g.fillRect(x, h - a, 1, a);
+  }
+}
+function pasoRegla(){ const pasos = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
+  return pasos.find(s => s * U.pps >= 70) || 600; }
+function pintarRegla(){
+  const cv = $("#regla"), ancho = anchoLinea(), h = 24, dpr = window.devicePixelRatio || 1;
+  cv.style.width = ancho + "px"; cv.style.height = h + "px"; cv.width = Math.min(32000, Math.round(ancho * dpr)); cv.height = h * dpr;
+  const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, ancho, h);
+  const paso = pasoRegla(), menor = paso / 5;
+  g.strokeStyle = css("--est-borde-fuerte"); g.fillStyle = css("--est-texto-3"); g.font = "10px " + css("--est-fuente-mono");
+  g.beginPath();
+  for(let i = 0; i * menor * U.pps < ancho; i++){
+    const t = i * menor, x = Math.round(t * U.pps) + 0.5, mayor = i % 5 === 0;
+    g.moveTo(x, mayor ? 10 : 17); g.lineTo(x, h);
+    if(mayor) g.fillText(paso < 1 ? fmtT(t) : fmtT(t).replace(/\.\d+$/, ""), x + 3, 10);
+  }
+  g.stroke();
+  g.fillStyle = css("--est-aviso");
+  for(const m of P.marcadores){ const x = m.t * U.pps; g.beginPath(); g.moveTo(x, 12); g.lineTo(x + 7, 16); g.lineTo(x, 20); g.fill(); }
+  // Zona más allá del final del video
+  const fin = duracionTotal() * U.pps;
+  g.fillStyle = css("--est-acento-suave"); g.fillRect(0, h - 3, fin, 3);
+}
+function moverCabezal(seguir){
+  const x = CABEZA() + U.t * U.pps;
+  $("#cabezal").style.left = x + "px";
+  if(seguir){ const s = $("#tl-scroll"); const vis = x - s.scrollLeft;
+    if(vis > s.clientWidth - 40 || vis < CABEZA()) s.scrollLeft = x - CABEZA() - 60; }
+}
+function pintarSelInfo(){
+  const n = U.sel.size;
+  $("#sel-info").textContent = n ? (n === 1 ? "1 clip elegido" : n + " clips elegidos") : "";
+}
+function zoomA(pps, anclaT){
+  const s = $("#tl-scroll"); const t = anclaT ?? U.t; const antes = CABEZA() + t * U.pps - s.scrollLeft;
+  U.pps = clamp(pps, PPS_MIN, PPS_MAX);
+  $("#zoom").value = Math.log(U.pps / PPS_MIN) / Math.log(PPS_MAX / PPS_MIN);
+  pintarLinea(); s.scrollLeft = CABEZA() + t * U.pps - antes;
+}
+function ajustarZoom(){ zoomA(($("#tl-scroll").clientWidth - CABEZA() - 40) / Math.max(duracionTotal(), 5), 0); $("#tl-scroll").scrollLeft = 0; }
+
+/* Puntos donde «pega» el imán: cortes, cabezal, marcadores y el cero. */
+function puntosIman(excluir){
+  const pts = [0, U.t, ...P.marcadores.map(m => m.t)];
+  for(const c of P.clips) if(!excluir.has(c.id)) pts.push(c.inicio, finClip(c));
+  return pts;
+}
+function iman(t, pts){
+  if(!U.iman) return {t, en:null};
+  const umbral = 8 / U.pps; let mejor = null;
+  for(const p of pts){ const d = Math.abs(p - t); if(d < umbral && (mejor === null || d < Math.abs(mejor - t))) mejor = p; }
+  return mejor === null ? {t, en:null} : {t:mejor, en:mejor};
+}
+function mostrarGuia(t){ const g = $("#guia-iman"); if(t === null){ g.style.display = "none"; return; }
+  g.style.display = "block"; g.style.left = (CABEZA() + t * U.pps) + "px"; }
+
+(function interaccionLinea(){
+  const pistasEl = $("#pistas");
+  let gesto = null;
+  pistasEl.addEventListener("pointerdown", ev => {
+    if(ev.button !== 0) return;
+    const cabeza = ev.target.closest(".est-pista__cabeza");
+    if(cabeza){ accionPista(ev, cabeza.parentElement.dataset.pista); return; }
+    const el = ev.target.closest(".est-clip");
+    const carril = ev.target.closest(".est-pista__carril");
+    if(!carril) return;
+    ev.preventDefault();
+    const x0 = ev.clientX, rect = carril.getBoundingClientRect();
+    if(!el){   // banda de selección; un clic sin arrastrar mueve el cabezal
+      gesto = {tipo:"banda", x0, y0:ev.clientY, sumar:ev.shiftKey || ev.ctrlKey || ev.metaKey, carrilX:rect.left, previa:new Set(U.sel)};
+      return;
+    }
+    const id = el.dataset.id, c = clip(id);
+    if(ev.ctrlKey || ev.metaKey || ev.shiftKey){ U.sel.has(id) ? U.sel.delete(id) : U.sel.add(id); }
+    else if(!U.sel.has(id)) U.sel = new Set([id]);
+    pintarSelInfo(); pintarPropiedades(); pedirCuadro();
+    $$(".est-clip").forEach(e => e.classList.toggle("sel", U.sel.has(e.dataset.id)));
+    const modo = ev.target.classList.contains("izq") ? "izq" : ev.target.classList.contains("der") ? "der" : "mover";
+    const ids = (modo === "mover" ? [...U.sel] : [id]).filter(i => !bloqueado(clip(i)));
+    if(!ids.length){ if(modo !== "mover") avisarBloqueo(); return; }
+    gesto = {tipo:modo, x0, id, orig:new Map(ids.map(i => [i, JSON.parse(JSON.stringify(clip(i)))])), movio:false,
+      sigs:modo !== "mover" && U.ondulado ? P.clips.filter(o => o.pista === c.pista && o.id !== id && o.inicio >= finClip(c) - CONTIGUO).map(o => [o.id, o.inicio]) : []};
+  });
+  window.addEventListener("pointermove", ev => {
+    if(!gesto) return;
+    if(gesto.tipo === "banda"){ banda(ev); return; }
+    const dtCrudo = (ev.clientX - gesto.x0) / U.pps;
+    if(Math.abs(ev.clientX - gesto.x0) > 2) gesto.movio = true;
+    if(!gesto.movio) return;
+    if(!gesto.orig.has(gesto.id)) gesto.id = gesto.orig.keys().next().value;
+    const o = gesto.orig.get(gesto.id), c = clip(gesto.id), pts = puntosIman(new Set(gesto.orig.keys()));
+    const min = 1 / P.fps, m = MED[c.origen] || {};
+    const conFin = (c.tipo === "video" || c.tipo === "audio") && m.dur > 0;
+    if(gesto.tipo === "mover"){
+      let dt = dtCrudo;
+      const a = iman(o.inicio + dt, pts), b = iman(o.inicio + o.duracion + dt, pts);
+      let guia = null;
+      if(a.en !== null && (b.en === null || Math.abs(a.t - o.inicio - dt) <= Math.abs(b.t - o.inicio - o.duracion - dt))){ dt = a.t - o.inicio; guia = a.en; }
+      else if(b.en !== null){ dt = b.t - o.inicio - o.duracion; guia = b.en; }
+      dt = Math.max(dt, -Math.min(...[...gesto.orig.values()].map(x => x.inicio)));
+      for(const [i, oi] of gesto.orig) clip(i).inicio = Math.max(0, oi.inicio + dt);
+      // Cambio de pista (un solo clip, a una pista del mismo tipo).
+      if(gesto.orig.size === 1){
+        const bajo = document.elementFromPoint(ev.clientX, ev.clientY); const fila = bajo && bajo.closest(".est-pista");
+        if(fila && (pista(fila.dataset.pista) || {}).tipo === pistaPara(c.tipo) && fila.dataset.pista !== c.pista && !(pista(fila.dataset.pista) || {}).bloqueada){
+          c.pista = fila.dataset.pista; pintarLinea(); }
+      }
+      mostrarGuia(guia);
+    }else if(gesto.tipo === "izq"){
+      let nuevo = iman(o.inicio + dtCrudo, pts); mostrarGuia(nuevo.en);
+      let d = nuevo.t - o.inicio;
+      d = Math.min(d, o.duracion - min);
+      if(conMedio(c) && c.tipo !== "imagen") d = Math.max(d, -o.entrada / o.velocidad);
+      if(!U.ondulado) d = Math.max(d, -o.inicio);
+      c.duracion = o.duracion - d;
+      if(c.tipo !== "imagen" && c.tipo !== "texto") c.entrada = o.entrada + d * o.velocidad;
+      if(c.tipo === "texto" && c.texto && c.texto.palabras) c.texto.palabras = o.texto.palabras.map(p => ({...p, i:p.i - d, f:p.f - d}));
+      if(U.ondulado){ c.inicio = o.inicio; for(const [i, t0] of gesto.sigs) clip(i).inicio = Math.max(0, t0 - d); }
+      else c.inicio = o.inicio + d;
+    }else{
+      let nuevo = iman(o.inicio + o.duracion + dtCrudo, pts); mostrarGuia(nuevo.en);
+      let dur = Math.max(min, nuevo.t - o.inicio);
+      if(conFin) dur = Math.min(dur, (m.dur - o.entrada) / o.velocidad);
+      c.duracion = dur;
+      if(U.ondulado) for(const [i, t0] of gesto.sigs) clip(i).inicio = Math.max(0, t0 + (dur - o.duracion));
+    }
+    for(const i of [...gesto.orig.keys(), ...gesto.sigs.map(s => s[0])]){
+      const ci = clip(i), e = pistasEl.querySelector(`.est-clip[data-id="${i}"]`);
+      if(e && ci){ e.style.left = ci.inicio * U.pps + "px"; e.style.width = Math.max(3, ci.duracion * U.pps) + "px"; }
+    }
+    pedirCuadro();
+  });
+  window.addEventListener("pointerup", ev => {
+    if(!gesto) return;
+    const g = gesto; gesto = null; mostrarGuia(null);
+    if(g.tipo === "banda"){
+      $("#banda-sel").style.display = "none";
+      if(!g.movio){ U.sel = g.sumar ? g.previa : new Set(); const t = (ev.clientX - g.carrilX) / U.pps; irA(t); }
+      pintarLinea(); pintarPropiedades(); pedirCuadro(); return;
+    }
+    if(g.movio){ pintarLinea(); cambio(); }
+  });
+  function banda(ev){
+    const dx = Math.abs(ev.clientX - gesto.x0), dy = Math.abs(ev.clientY - gesto.y0);
+    if(dx + dy > 4) gesto.movio = true;
+    if(!gesto.movio) return;
+    const cont = $("#tl-interior").getBoundingClientRect();
+    const x1 = Math.min(ev.clientX, gesto.x0), x2 = Math.max(ev.clientX, gesto.x0), y1 = Math.min(ev.clientY, gesto.y0), y2 = Math.max(ev.clientY, gesto.y0);
+    const b = $("#banda-sel"); b.style.display = "block";
+    Object.assign(b.style, {left:(x1 - cont.left) + "px", top:(y1 - cont.top) + "px", width:(x2 - x1) + "px", height:(y2 - y1) + "px"});
+    const nueva = new Set(gesto.sumar ? gesto.previa : []);
+    for(const e of $$(".est-clip")){ const r = e.getBoundingClientRect();
+      if(r.right > x1 && r.left < x2 && r.bottom > y1 && r.top < y2) nueva.add(e.dataset.id); }
+    U.sel = nueva; $$(".est-clip").forEach(e => e.classList.toggle("sel", U.sel.has(e.dataset.id))); pintarSelInfo();
+  }
+  // Regla: clic y arrastre mueven el cabezal.
+  const regla = $("#regla");
+  regla.addEventListener("pointerdown", ev => {
+    regla.setPointerCapture(ev.pointerId);
+    const mover = e => irA((e.clientX - regla.getBoundingClientRect().left) / U.pps);
+    mover(ev); regla.onpointermove = mover; regla.onpointerup = () => { regla.onpointermove = null; };
+  });
+  // Soltar medios del banco sobre una pista.
+  pistasEl.addEventListener("dragover", ev => { const c = ev.target.closest(".est-pista__carril"); if(!c) return;
+    ev.preventDefault(); $$(".est-pista__carril.destino").forEach(e => e.classList.remove("destino")); c.classList.add("destino"); });
+  pistasEl.addEventListener("dragleave", ev => { const c = ev.target.closest(".est-pista__carril"); if(c) c.classList.remove("destino"); });
+  pistasEl.addEventListener("drop", ev => {
+    const c = ev.target.closest(".est-pista__carril"); $$(".est-pista__carril.destino").forEach(e => e.classList.remove("destino"));
+    if(!c) return; ev.preventDefault();
+    if((pista(c.parentElement.dataset.pista) || {}).bloqueada){ avisarBloqueo(); return; }
+    let d; try{ d = JSON.parse(ev.dataTransfer.getData("application/x-medio")); }catch(_){ return; }
+    const t = Math.max(0, (ev.clientX - c.getBoundingClientRect().left) / U.pps);
+    agregarMedio(d.url, d.tipo, d.nombre, {pista:c.parentElement.dataset.pista, t:iman(t, puntosIman(new Set())).t});
+  });
+  pistasEl.addEventListener("dblclick", ev => {
+    const n = ev.target.closest(".nombre"); if(!n) return;
+    const p = pista(n.closest(".est-pista").dataset.pista);
+    const inp = document.createElement("input"); inp.value = p.nombre || ""; inp.className = "est-campo"; inp.style.width = "100%";
+    n.replaceWith(inp); inp.focus(); inp.select();
+    const fin = () => { p.nombre = inp.value.trim().slice(0, 40) || p.nombre; cambio(); };
+    inp.onblur = fin; inp.onkeydown = e => { if(e.key === "Enter") inp.blur(); if(e.key === "Escape"){ inp.value = p.nombre; inp.blur(); } };
+  });
+})();
+function accionPista(ev, id){
+  const b = ev.target.closest("[data-acc]"); if(!b) return;
+  const p = pista(id);
+  if(b.dataset.acc === "ocultar") p.oculta = !p.oculta;
+  if(b.dataset.acc === "silencio") p.silencio = !p.silencio;
+  if(b.dataset.acc === "solo") p.solo = !p.solo;
+  if(b.dataset.acc === "bloquear") p.bloqueada = !p.bloqueada;
+  if(b.dataset.acc === "quitar"){
+    if(P.clips.some(c => c.pista === id)){ toast("La pista tiene clips: bórralos o muévelos antes"); return; }
+    if(P.pistas.filter(q => q.tipo === p.tipo).length < 2){ toast("Debe quedar al menos una pista de " + p.tipo); return; }
+    P.pistas = P.pistas.filter(q => q.id !== id);
+  }
+  sincronizar(U.t, U.reproduciendo); cambio();
+}
+function nuevaPista(tipo){
+  const n = P.pistas.filter(p => p.tipo === tipo).length + 1;
+  const id = tipo[0] + uid();
+  const nombre = {video:"Video " + n, texto:"Texto " + n, audio:"Audio " + n}[tipo];
+  const pos = tipo === "audio" ? P.pistas.length : tipo === "texto" ? 0 : P.pistas.findIndex(p => p.tipo === "video");
+  P.pistas.splice(Math.max(0, pos), 0, {id, tipo, nombre});
+  cambio(); return id;
+}
+
+/* ---------------- Edición ---------------- */
+function primeraPista(tipo, preferida){
+  const t = pistaPara(tipo);
+  if(preferida && (pista(preferida) || {}).tipo === t) return preferida;
+  const todas = P.pistas.filter(p => p.tipo === t), libres = todas.filter(p => !p.bloqueada);
+  const ps = libres.length ? libres : todas;
+  return (t === "video" ? ps[ps.length - 1] : ps[0]).id;     // video: la de abajo (la principal)
+}
+function libreDesde(pistaId, t, dur, ignorar){
+  // Si [t, t+dur) choca con otro clip de la pista, se pone a continuación del que choca.
+  let x = t, cambio = true;
+  while(cambio){ cambio = false;
+    for(const c of P.clips) if(c.pista === pistaId && c.id !== ignorar && x < finClip(c) - EPS && x + dur > c.inicio + EPS){ x = finClip(c); cambio = true; } }
+  return x;
+}
+async function agregarMedio(url, tipo, nombre, donde){
+  const m = await sondear(url, tipo, nombre);
+  tipo = m.tipo;
+  const pistaId = primeraPista(tipo, donde && donde.pista);
+  const dur = tipo === "imagen" ? 5 : (m.dur || 5);
+  const t = libreDesde(pistaId, donde && donde.t != null ? donde.t : U.t, dur);
+  const c = clipBase(tipo, {pista:pistaId, origen:url, nombre:m.nombre, inicio:t, duracion:dur});
+  if(tipo === "imagen") c.kb = {ini:{escala:1, x:0, y:0}, fin:{escala:1.08, x:0, y:0}};   // Ken Burns suave por defecto
+  P.clips.push(c); U.sel = new Set([c.id]);
+  if(tipo !== "imagen") onda(url);
+  cambio(); toast("«" + m.nombre + "» en la pista " + (pista(pistaId).nombre || ""));
+  return c;
+}
+function interpolarKb(c, k){ const a = c.kb.ini, b = c.kb.fin || a;
+  return {escala:a.escala + (b.escala - a.escala) * k, x:a.x + (b.x - a.x) * k, y:a.y + (b.y - a.y) * k}; }
+function dividir(){
+  const t = U.t;
+  let objetivo = P.clips.filter(c => U.sel.has(c.id) && !bloqueado(c) && c.inicio < t - EPS && finClip(c) > t + EPS);
+  if(!objetivo.length) objetivo = P.clips.filter(c => !(pista(c.pista) || {}).oculta && !bloqueado(c) && c.inicio < t - EPS && finClip(c) > t + EPS);
+  if(!objetivo.length){ toast("No hay clips bajo el cabezal"); return; }
+  const nuevos = [];
+  for(const c of objetivo){
+    const l = t - c.inicio, k = l / c.duracion;
+    const d = JSON.parse(JSON.stringify(c)); d.id = uid();
+    d.inicio = t; d.duracion = c.duracion - l; d.transicion = null; d.fundido_entrada = 0;
+    if(c.tipo !== "imagen" && c.tipo !== "texto") d.entrada = c.entrada + l * c.velocidad;
+    const medio = interpolarKb(c, k); c.kb.fin = medio; d.kb.ini = {...medio};
+    c.duracion = l; c.fundido_salida = 0;
+    if(c.tipo === "texto" && c.texto && c.texto.palabras && c.texto.palabras.length){
+      c.texto.palabras = c.texto.palabras.filter(p => p.i < l);
+      d.texto.palabras = d.texto.palabras.filter(p => p.i >= l).map(p => ({...p, i:p.i - l, f:p.f - l}));
+    }
+    P.clips.push(d); nuevos.push(d.id);
+  }
+  U.sel = new Set(nuevos); cambio();
+}
+function borrar(ondulado){
+  const libres = [...U.sel].filter(id => !bloqueado(clip(id)));
+  if(U.sel.size && !libres.length){ avisarBloqueo(); return; }
+  U.sel = new Set(libres);
+  const ids = [...U.sel]; if(!ids.length) return;
+  const quitados = P.clips.filter(c => U.sel.has(c.id)).sort((a, b) => b.inicio - a.inicio);
+  P.clips = P.clips.filter(c => !U.sel.has(c.id));
+  ids.forEach(liberar);
+  if(ondulado || U.ondulado){
+    for(const q of quitados) for(const c of P.clips)
+      if(c.pista === q.pista && c.inicio >= finClip(q) - CONTIGUO) c.inicio = Math.max(0, c.inicio - q.duracion);
+  }
+  U.sel = new Set(); cambio();
+}
+function copiar(cortar){
+  const cs = P.clips.filter(c => U.sel.has(c.id)); if(!cs.length) return;
+  const base = Math.min(...cs.map(c => c.inicio));
+  U.portapapeles = cs.map(c => ({...JSON.parse(JSON.stringify(c)), _rel:c.inicio - base}));
+  toast(cs.length + (cs.length === 1 ? " clip copiado" : " clips copiados"));
+  if(cortar) borrar(false);
+}
+function pegar(){
+  if(!U.portapapeles) return;
+  const nuevos = [];
+  for(const c of U.portapapeles){
+    const d = JSON.parse(JSON.stringify(c)); delete d._rel; d.id = uid();
+    if(!pista(d.pista) || pista(d.pista).bloqueada) d.pista = primeraPista(d.tipo);
+    if(pista(d.pista).bloqueada){ avisarBloqueo(); continue; }
+    d.inicio = libreDesde(d.pista, U.t + c._rel, d.duracion);
+    P.clips.push(d); nuevos.push(d.id);
+  }
+  U.sel = new Set(nuevos); cambio();
+}
+function marcador(){
+  const t = Math.round(U.t * P.fps) / P.fps;
+  const i = P.marcadores.findIndex(m => Math.abs(m.t - t) < 1 / P.fps);
+  if(i >= 0) P.marcadores.splice(i, 1); else P.marcadores.push({t, nombre:""});
+  P.marcadores.sort((a, b) => a.t - b.t); cambio();
+}
+function puntoEdicion(dir){
+  const pts = [...new Set([0, duracionTotal(), ...P.marcadores.map(m => m.t), ...P.clips.flatMap(c => [c.inicio, finClip(c)])])].sort((a, b) => a - b);
+  const t = dir > 0 ? pts.find(p => p > U.t + 1e-3) : [...pts].reverse().find(p => p < U.t - 1e-3);
+  if(t !== undefined) irA(t, true);
+}
+</script>
+<script>
+"use strict";
+/* ---------------- Propiedades ---------------- */
+function obtener(o, ruta){ return ruta.split(".").reduce((a, k) => a == null ? a : a[k], o); }
+function fijar(o, ruta, v){ const ks = ruta.split("."); let a = o;
+  for(const k of ks.slice(0, -1)){ if(a[k] == null || typeof a[k] !== "object") a[k] = {}; a = a[k]; } a[ks[ks.length - 1]] = v; }
+function deslizador(ruta, etiqueta, min, max, paso, fmt){
+  return `<div class="est-fila"><label>${etiqueta}</label><input type="range" data-k="${ruta}" min="${min}" max="${max}" step="${paso}"><output data-o="${ruta}" data-fmt="${fmt || ""}"></output></div>`;
+}
+const FORMATOS = {
+  pct:v => Math.round(v * 100) + " %", x:v => (+v).toFixed(2) + "×", s:v => (+v).toFixed(2) + " s",
+  ent:v => String(Math.round(v)), pct100:v => Math.round(v) + " %", px:v => +v ? Math.round(v) + " px" : "auto",
+};
+function pintarPropiedades(){
+  const cont = $("#propiedades");
+  const sel = P.clips.filter(c => U.sel.has(c.id));
+  if(!sel.length){
+    cont.innerHTML = `<div class="vacio">Elige un clip en la línea de tiempo para ver sus propiedades.</div>
+      <div class="est-nota">Proyecto ${P.ancho}×${P.alto} · ${P.fps} cuadros/s · ${P.clips.length} clips · ${fmtT(duracionTotal())}.</div>
+      <div class="est-caja-aviso">${icono("info")}<span>Arrastra el clip elegido en el visor para moverlo; la rueda del ratón cambia su escala. Con un Ken Burns, el gesto mueve el cuadro clave más cercano al cabezal.</span></div>`;
+    return;
+  }
+  if(sel.length > 1){
+    cont.innerHTML = `<div class="vacio">${sel.length} clips elegidos.</div>
+      <div class="est-fila"><label>Transición</label><select id="multi-tr"><option value="">—</option>${opcionesTransicion("")}</select></div>
+      <button class="est-boton est-boton--borde" id="multi-borrar">${icono("papelera")}Borrar</button>`;
+    $("#multi-tr").onchange = ev => { for(const c of sel) c.transicion = ev.target.value ? {tipo:ev.target.value, dur:0.5} : null; cambio(); };
+    $("#multi-borrar").onclick = () => borrar(false);
+    return;
+  }
+  const c = sel[0], m = MED[c.origen] || {};
+  const partes = [];
+  partes.push(`<div class="est-seccion"><div class="est-seccion__titulo">${icono(ICONO_CLIP[c.tipo], "ico--sm")}${esc(c.tipo === "texto" ? "Texto" : (c.nombre || m.nombre || "Clip"))}</div>
+    <div class="rejilla2"><div class="est-fila"><label style="width:auto">Inicio</label><input type="number" step="0.01" min="0" data-k="inicio" data-num></div>
+    <div class="est-fila"><label style="width:auto">Dura</label><input type="number" step="0.01" min="0.04" data-k="duracion" data-num></div></div>
+    ${c.tipo === "video" || c.tipo === "audio" ? `<div class="est-nota">Toma del original: ${fmtT(c.entrada)} – ${fmtT(c.entrada + c.duracion * c.velocidad)}${m.dur ? " de " + fmtT(m.dur) : ""}</div>` : ""}</div>`);
+  if(c.tipo === "texto"){
+    const t = c.texto || (c.texto = {});
+    const conPalabras = t.palabras && t.palabras.length;
+    partes.push(`<div class="est-seccion"><div class="est-seccion__titulo">Texto</div>
+      <div class="est-fila"><label>Estilo</label><select data-k="texto.estilo"><option value="titular">Titular</option><option value="rotulo">Rótulo nombre / cargo</option><option value="subtitulo">Subtítulo</option><option value="libre">Texto libre</option></select></div>
+      <textarea id="txt-contenido" placeholder="Escribe el texto">${esc(conPalabras && !t.contenido ? t.palabras.map(p => p.p).join(" ") : (t.contenido || ""))}</textarea>
+      ${t.estilo === "rotulo" ? `<div class="est-fila"><label>Cargo</label><input type="text" data-k="texto.cargo"></div>` : ""}
+      ${conPalabras ? `<label class="est-fila"><input type="checkbox" data-k="texto.resaltado" data-bool="palabra"> Resaltar palabra a palabra</label>
+        <div class="est-nota">Subtítulo con tiempos por palabra: al corregir se conservan los tiempos si no cambia el número de palabras.</div>` : ""}
+      ${deslizador("texto.tam", "Tamaño", 0, 300, 1, "px")}
+      <div class="est-fila"><label>Color</label><select data-k="texto.color"><option value="">Por estilo</option><option value="texto">Papel</option><option value="acento">Acento (q'illu)</option><option value="marca">Marca (puka)</option><option value="fondo">Tinta</option><option value="texto_suave">Suave</option></select></div>
+      <label class="est-fila"><input type="checkbox" data-k="texto.caja"> Caja de fondo</label>
+      <div class="est-fila"><label>Alinear</label><select data-k="texto.alinear"><option value="">Por estilo</option><option value="izq">Izquierda</option><option value="centro">Centro</option><option value="der">Derecha</option></select></div>
+      ${deslizador("texto.x", "Horizontal", 0, 1, 0.005, "pct")}${deslizador("texto.y", "Vertical", 0, 1, 0.005, "pct")}</div>`);
+  }
+  if(c.tipo === "video" || c.tipo === "audio"){
+    partes.push(`<div class="est-seccion"><div class="est-seccion__titulo">Velocidad y audio</div>
+      ${deslizador("velocidad", "Velocidad", 0.25, 4, 0.05, "x")}
+      <div class="est-grupo" style="margin:-2px 0 8px 80px">${[0.5, 1, 1.5, 2].map(v => `<button class="est-chip" data-vel="${v}">${v}×</button>`).join("")}</div>
+      ${deslizador("volumen", "Volumen", 0, 2, 0.01, "pct")}
+      <label class="est-fila"><input type="checkbox" data-k="silencio"> Silenciar este clip</label>
+      ${c.tipo === "audio" ? `<label class="est-fila"><input type="checkbox" data-k="ducking"> Música: bajar cuando hay voz</label>` : ""}</div>`);
+  }
+  partes.push(`<div class="est-seccion"><div class="est-seccion__titulo">Fundidos y transición</div>
+    ${deslizador("fundido_entrada", "Entrada", 0, 3, 0.05, "s")}${deslizador("fundido_salida", "Salida", 0, 3, 0.05, "s")}
+    ${c.tipo !== "audio" ? `<div class="est-fila"><label>Transición</label><select id="tr-tipo"><option value="">Corte</option>${opcionesTransicion((c.transicion || {}).tipo)}</select></div>
+      ${c.transicion ? deslizador("transicion.dur", "Dura", 0.1, 3, 0.05, "s") : ""}
+      <div class="est-nota">La transición mezcla este clip con el anterior de la misma pista (si se tocan).</div>` : ""}</div>`);
+  if(visual(c)){
+    partes.push(`<div class="est-seccion"><div class="est-seccion__titulo">Imagen</div>
+      ${deslizador("opacidad", "Opacidad", 0, 1, 0.01, "pct")}
+      ${deslizador("ajustes.br", "Brillo", 50, 150, 1, "pct100")}${deslizador("ajustes.ct", "Contraste", 50, 150, 1, "pct100")}${deslizador("ajustes.sat", "Saturación", 0, 200, 1, "pct100")}</div>
+      <div class="est-seccion"><div class="est-seccion__titulo">Encuadre y Ken Burns</div>
+      <div class="est-fila"><label>Encaje</label><select data-k="encaje"><option value="cubrir">Cubrir el cuadro</option><option value="contener">Contener (logo, marco)</option></select></div>
+      <div class="est-nota" style="margin-bottom:4px">Al inicio del clip</div>
+      ${deslizador("kb.ini.escala", "Escala", 0.1, 4, 0.01, "x")}${deslizador("kb.ini.x", "Horizontal", -1, 1, 0.005, "pct")}${deslizador("kb.ini.y", "Vertical", -1, 1, 0.005, "pct")}
+      <div class="est-nota" style="margin-bottom:4px">Al final del clip</div>
+      ${deslizador("kb.fin.escala", "Escala", 0.1, 4, 0.01, "x")}${deslizador("kb.fin.x", "Horizontal", -1, 1, 0.005, "pct")}${deslizador("kb.fin.y", "Vertical", -1, 1, 0.005, "pct")}
+      <div class="est-grupo"><button class="est-boton est-boton--sm est-boton--borde" id="kb-quieto">Sin movimiento</button>
+        <button class="est-boton est-boton--sm est-boton--borde" id="kb-acercar">Acercar lento</button>
+        <button class="est-boton est-boton--sm est-boton--borde" id="kb-alejar">Alejar lento</button></div>
+      <div class="est-nota" style="margin:8px 0 4px">Recorte del original</div>
+      ${deslizador("recorte.x", "Izquierda", 0, 0.9, 0.005, "pct")}${deslizador("recorte.y", "Arriba", 0, 0.9, 0.005, "pct")}
+      ${deslizador("recorte.w", "Ancho", 0.1, 1, 0.005, "pct")}${deslizador("recorte.h", "Alto", 0.1, 1, 0.005, "pct")}</div>`);
+  }
+  partes.push(`<div class="est-grupo"><button class="est-boton est-boton--borde" id="p-dividir">${icono("cortar")}Dividir</button>
+    <button class="est-boton est-boton--borde" id="p-borrar">${icono("papelera")}Borrar</button></div>`);
+  cont.innerHTML = partes.join("");
+  // Enlazar controles con el clip
+  cont.querySelectorAll("[data-k]").forEach(el => {
+    const ruta = el.dataset.k, v = obtener(c, ruta);
+    if(el.type === "checkbox") el.checked = el.dataset.bool ? v === el.dataset.bool : !!v;
+    else el.value = (el.dataset.num !== undefined && typeof v === "number") ? +v.toFixed(3) : (v ?? "");
+    const salida = cont.querySelector(`[data-o="${ruta}"]`);
+    const pintarSalida = () => { if(salida) salida.textContent = (FORMATOS[salida.dataset.fmt] || String)(el.value);
+      if(el.type === "range") el.style.setProperty("--valor", ((el.value - el.min) / (el.max - el.min) * 100) + "%"); };
+    pintarSalida();
+    const leer = () => el.type === "checkbox" ? (el.dataset.bool ? (el.checked ? el.dataset.bool : null) : el.checked)
+      : (el.type === "range" || el.dataset.num !== undefined) ? parseFloat(el.value) : el.value || null;
+    el.addEventListener("input", () => { aplicarPropiedad(c, ruta, leer()); pintarSalida(); pedirCuadro(); actualizarClipDom(c); });
+    el.addEventListener("change", () => { aplicarPropiedad(c, ruta, leer()); cambio({sinProps:el.type === "range" || el.type === "text" || el.type === "number"}); if(ruta === "texto.estilo") pintarPropiedades(); });
+  });
+  cont.querySelectorAll("[data-vel]").forEach(b => b.onclick = () => { aplicarPropiedad(c, "velocidad", +b.dataset.vel); cambio(); });
+  const tr = $("#tr-tipo"); if(tr) tr.onchange = () => { c.transicion = tr.value ? {tipo:tr.value, dur:(c.transicion || {}).dur || 0.5} : null; cambio(); };
+  const tc = $("#txt-contenido");
+  if(tc){ const aplicar = () => editarTexto(c, tc.value); tc.oninput = () => { aplicar(); pedirCuadro(); actualizarClipDom(c); }; tc.onchange = () => { aplicar(); cambio({sinProps:true}); }; }
+  const kb = (a, b) => { c.kb = {ini:a, fin:b}; cambio(); };
+  if($("#kb-quieto")) $("#kb-quieto").onclick = () => kb({...c.kb.ini}, {...c.kb.ini});
+  if($("#kb-acercar")) $("#kb-acercar").onclick = () => kb({escala:1, x:0, y:0}, {escala:1.15, x:0, y:0});
+  if($("#kb-alejar")) $("#kb-alejar").onclick = () => kb({escala:1.15, x:0, y:0}, {escala:1, x:0, y:0});
+  $("#p-dividir").onclick = dividir; $("#p-borrar").onclick = () => borrar(false);
+  if(bloqueado(c)){
+    cont.querySelectorAll("input,select,textarea,button").forEach(e => e.disabled = true);
+    cont.insertAdjacentHTML("afterbegin", `<div class="est-caja-aviso">${icono("candado")}<span>La pista está bloqueada: desbloquéala con el candado de su cabecera para editar este clip.</span></div>`);
+  }
+}
+function opcionesTransicion(sel){
+  return [["fundido","Fundido cruzado"],["negro","Fundido a negro"],["deslizar","Deslizar"],["barrido","Barrido"]]
+    .map(([v, t]) => `<option value="${v}" ${v === sel ? "selected" : ""}>${t}</option>`).join("");
+}
+function aplicarPropiedad(c, ruta, v){
+  if(ruta === "velocidad"){
+    // Como en CapCut: cambiar la velocidad conserva el tramo del original y cambia la duración en la línea.
+    const vel = clamp(+v || 1, 0.25, 4), tramo = c.duracion * c.velocidad, m = MED[c.origen] || {};
+    c.velocidad = vel; c.duracion = Math.max(1 / P.fps, tramo / vel);
+    if(m.dur) c.duracion = Math.min(c.duracion, (m.dur - c.entrada) / vel);
+    return;
+  }
+  if(ruta === "duracion"){ const m = MED[c.origen] || {}; let d = Math.max(1 / P.fps, +v || 0);
+    if((c.tipo === "video" || c.tipo === "audio") && m.dur) d = Math.min(d, (m.dur - c.entrada) / c.velocidad); c.duracion = d; return; }
+  if(ruta === "inicio"){ c.inicio = Math.max(0, +v || 0); return; }
+  if(ruta === "texto.tam" && !(+v)) v = 0;
+  fijar(c, ruta, v);
+}
+function editarTexto(c, valor){
+  const t = c.texto;
+  if(t.palabras && t.palabras.length && !t.contenido){
+    const nuevas = valor.trim().split(/\s+/).filter(Boolean);
+    if(nuevas.length === t.palabras.length) t.palabras.forEach((p, i) => p.p = nuevas[i]);
+    else if(nuevas.length){ const i0 = t.palabras[0].i, f1 = t.palabras[t.palabras.length - 1].f, paso = (f1 - i0) / nuevas.length;
+      t.palabras = nuevas.map((p, i) => ({p, i:i0 + i * paso, f:i0 + (i + 1) * paso})); }
+    else t.palabras = [];
+  }else t.contenido = valor;
+}
+function actualizarClipDom(c){
+  const e = document.querySelector(`.est-clip[data-id="${c.id}"]`); if(!e) return;
+  e.style.left = c.inicio * U.pps + "px"; e.style.width = Math.max(3, c.duracion * U.pps) + "px";
+}
+
+/* ---------------- Paneles: banco ---------------- */
+let filtroMedio = "videos";
+function miniatura(url){ return url.replace(/\/banco\//, "/miniatura/"); }
+function pintarBanco(){
+  const q = ($("#buscar-medio").value || "").toLowerCase();
+  const lista = (BANCO[filtroMedio] || []).filter(m => !q || (m.name || "").toLowerCase().includes(q)).slice(0, 300);
+  const tipo = {videos:"video", imagenes:"imagen", audios:"audio"}[filtroMedio];
+  $("#lista-medios").innerHTML = lista.length ? lista.map((m, i) => `<div class="medio" draggable="true" data-i="${i}" title="${esc(m.name)}${m.credito ? " · " + esc(m.credito) : ""}">
+      ${tipo === "imagen" ? `<img loading="lazy" src="${esc(m.miniatura || miniatura(m.url))}" alt="">`
+        : tipo === "video" ? `<video muted preload="none" data-src="${esc(m.url)}#t=0.5"></video><div class="ico-tipo">${icono("video")}</div>`
+        : `<div class="ico-tipo">${icono("musica")}</div>`}
+      <span>${esc(m.name)}</span></div>`).join("")
+    : `<div class="vacio" style="grid-column:1/-1">${q ? "Nada coincide con la búsqueda." : "No hay " + ({videos:"videos", imagenes:"fotos", audios:"audios"}[filtroMedio]) + " en el banco. Súbelos con el botón de subir."}</div>`;
+  const obs = new IntersectionObserver(ents => ents.forEach(e => { if(e.isIntersecting){ const v = e.target;
+    v.src = v.dataset.src; v.preload = "metadata"; v.onloadeddata = () => { const ic = v.nextElementSibling; if(ic) ic.remove(); }; obs.unobserve(v); } }));
+  $$("#lista-medios video").forEach(v => obs.observe(v));
+  $$("#lista-medios .medio").forEach(el => {
+    const m = lista[+el.dataset.i];
+    el.ondragstart = ev => ev.dataTransfer.setData("application/x-medio", JSON.stringify({url:m.url, tipo, nombre:m.name}));
+    el.ondblclick = () => agregarMedio(m.url, tipo, m.name);
+  });
+}
+$("#buscar-medio").oninput = pintarBanco;
+$$("#filtro-medio button").forEach(b => b.onclick = () => { filtroMedio = b.dataset.f;
+  $$("#filtro-medio button").forEach(x => x.classList.toggle("on", x === b)); pintarBanco(); });
+$("#b-refrescar").onclick = cargarBanco;
+$("#b-subir").onclick = () => $("#archivo").click();
+$("#archivo").onchange = async ev => {
+  const archivos = [...ev.target.files]; ev.target.value = "";
+  for(const f of archivos){
+    toast("Subiendo «" + f.name + "»…", 60000);
+    try{
+      const r = await fetch(api("/api/subir"), {method:"POST", headers:{"X-Nombre":encodeURIComponent(f.name), "Content-Type":f.type || "application/octet-stream"}, body:f});
+      const d = await r.json(); if(!d.ok) throw new Error(d.error);
+      await cargarBanco();
+      await agregarMedio(d.url, d.esVideo ? "video" : d.esAudio ? "audio" : "imagen", f.name);
+    }catch(e){ toast("No se pudo subir «" + f.name + "»: " + e.message); }
+  }
+};
+
+/* ---------------- Paneles: texto ---------------- */
+$$("[data-texto]").forEach(b => b.onclick = () => {
+  const estilo = b.dataset.texto, txt = CFG.textos || {};
+  const pistaId = primeraPista("texto");
+  const def = {
+    titular:{contenido:"Titular de la pieza", x:0.5, y:0.2, caja:true},
+    rotulo:{contenido:txt.nombre || "Nombre Apellido", cargo:txt.rol || "Cargo o circunscripción", x:0.08, y:0.74},
+    subtitulo:{contenido:"Subtítulo", x:0.5, y:0.8},
+    libre:{contenido:"Texto", x:0.5, y:0.5},
+  }[estilo];
+  const dur = estilo === "rotulo" ? 5 : 3;
+  const c = clipBase("texto", {pista:pistaId, inicio:libreDesde(pistaId, U.t, dur), duracion:dur, fundido_entrada:0.25, fundido_salida:0.25,
+    texto:Object.assign({estilo, tam:0, color:null, alinear:null}, def)});
+  P.clips.push(c); U.sel = new Set([c.id]); cambio();
+});
+
+/* ---------------- Paneles: marca ---------------- */
+function itemsMarca(){
+  const pl = CFG.plantillas || {}, out = [];
+  const W = P.ancho, H = P.alto, vertical = H > W;
+  const coincide = clave => { const m = /(\d+)x(\d+)$/.exec(clave); if(!m) return /9x16$/.test(clave) ? vertical : /16x9$/.test(clave) ? !vertical && W / H > 1.5 : false;
+    return Math.abs((+m[1] / +m[2]) - W / H) < 0.02; };
+  for(const [clave, modos] of Object.entries(pl.marcos || {})) for(const [modo, url] of Object.entries(modos))
+    out.push({nombre:"Marco " + clave.replace(/_/g, " ") + " · " + modo, url, tipo:"marco", ok:coincide(clave)});
+  for(const [clave, modos] of Object.entries(pl.bandas || {})) for(const [modo, url] of Object.entries(modos))
+    out.push({nombre:"Banda " + clave.replace(/_/g, " ") + " · " + modo, url, tipo:"marco", ok:coincide(clave)});
+  for(const [suf, url] of Object.entries(pl.rotulos_tiktok || {})) out.push({nombre:"Rótulo 9:16 " + suf, url, tipo:"marco", ok:vertical});
+  for(const [suf, url] of Object.entries(pl.rotulos_16x9 || {})) out.push({nombre:"Rótulo 16:9 " + suf, url, tipo:"marco", ok:!vertical});
+  if(pl.mosca) out.push({nombre:"Mosca", url:pl.mosca, tipo:"logo", ok:true});
+  if(pl.monograma) out.push({nombre:"Monograma", url:pl.monograma, tipo:"logo", ok:true});
+  for(const k of ["logo_color", "logo_blanco"]) if((CFG.insumos || {})[k]) out.push({nombre:k === "logo_color" ? "Logo (color)" : "Logo (blanco)", url:CFG.insumos[k], tipo:"logo", ok:true});
+  return out.sort((a, b) => (b.ok - a.ok));
+}
+function pintarMarca(){
+  const items = itemsMarca();
+  $("#lista-marca").innerHTML = items.length ? items.map((it, i) => `<div class="miniatura-marca" data-i="${i}" title="${esc(it.nombre)}${it.ok ? "" : " (otro formato)"}" style="${it.ok ? "" : "opacity:.55"}">
+    <img loading="lazy" src="${esc(it.url)}" alt=""><span>${esc(it.nombre)}</span></div>`).join("")
+    : `<div class="vacio" style="grid-column:1/-1">El perfil no tiene marcos ni logos generados (plantillas/marco_foto_video/generar_marcos.py).</div>`;
+  $$("#lista-marca .miniatura-marca").forEach(el => el.onclick = async () => {
+    const it = items[+el.dataset.i];
+    await sondear(it.url, "imagen", it.nombre);
+    const dur = Math.max(duracionTotal(), 5);
+    // Una pista de superposición libre en [0, dur) (la de más arriba); si no hay, se crea encima.
+    const libres = P.pistas.filter(p => p.tipo === "video" && p.id !== primeraPista("video")
+      && !P.clips.some(c => c.pista === p.id && c.inicio < dur && finClip(c) > 0));
+    const pistaId = libres.length ? libres[0].id : nuevaPista("video");
+    const c = clipBase("imagen", {pista:pistaId, origen:it.url, nombre:it.nombre, inicio:0, duracion:dur, encaje:"contener"});
+    if(it.tipo === "logo") c.kb = {ini:{escala:0.18, x:0.36, y:-0.40}, fin:{escala:0.18, x:0.36, y:-0.40}};
+    P.clips.push(c); U.sel = new Set([c.id]); cambio(); toast(it.nombre + " en la pista de superposición");
+  });
+}
+$("#ver-zonas").onchange = ev => { U.zonas = ev.target.checked; $("#b-zonas").classList.toggle("on", U.zonas); pedirCuadro(); };
+$("#b-zonas").onclick = () => { U.zonas = !U.zonas; $("#ver-zonas").checked = U.zonas; $("#b-zonas").classList.toggle("on", U.zonas); pedirCuadro(); };
+
+/* ---------------- Subtítulos automáticos (Whisper en el servidor, como shorts.py) ---------------- */
+/* Idiomas de Whisper (de /api/video-config): los destacados con nombre y luego el resto por código. El quechua y
+   el aimara no los reconoce Whisper: se dice, en vez de ofrecer una opción que no funciona. */
+function pintarIdiomas(){
+  const id = VCFG.idiomas || {}, dest = id.destacados || [{codigo:"es", nombre:"Español"}];
+  const nombres = new Intl.DisplayNames(["es"], {type:"language"});
+  const resto = (id.todos || []).filter(c => !dest.some(d => d.codigo === c)).map(c => {
+    let n = c; try{ n = nombres.of(c) || c; }catch(_){ } return {codigo:c, nombre:n.charAt(0).toUpperCase() + n.slice(1)};
+  }).sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
+  $("#subs-idioma").innerHTML = dest.map(d => `<option value="${esc(d.codigo)}">${esc(d.nombre)}</option>`).join("")
+    + (resto.length ? `<optgroup label="Otros idiomas">${resto.map(d => `<option value="${esc(d.codigo)}">${esc(d.nombre)} (${esc(d.codigo)})</option>`).join("")}</optgroup>` : "");
+  $("#subs-idioma").value = "es";
+  const sin = (id.sin_soporte || []).map(d => d.nombre);
+  $("#subs-idioma-nota").textContent = sin.length ? sin.join(" y ") + ": Whisper no los reconoce; escribe esos subtítulos a mano (clip de texto)." : "";
+}
+$("#subs-y").oninput = ev => { $("#subs-y-o").textContent = Math.round(ev.target.value * 100) + "%"; };
+async function esperarTrabajo(id, alAvanzar){
+  for(;;){
+    await new Promise(r => setTimeout(r, 1000));
+    const t = await jget("/api/trabajo?id=" + encodeURIComponent(id));
+    if(t.estado === "listo") return t;
+    if(t.estado === "error") throw new Error(t.error || "falló");
+    if(t.estado === "desconocido") throw new Error("el servidor olvidó el trabajo (¿se reinició?)");
+    alAvanzar(t);
+  }
+}
+$("#b-subtitular").onclick = async () => {
+  const c = U.sel.size === 1 ? clip([...U.sel][0]) : null;
+  if(!c || (c.tipo !== "video" && c.tipo !== "audio")){ toast("Elige primero el clip de video o audio con la voz"); return; }
+  if(!VCFG.whisper){ toast("Whisper no está instalado en esta computadora"); return; }
+  const barra = $("#subs-barra"), estado = $("#subs-estado"), btn = $("#b-subtitular");
+  barra.classList.remove("oculto"); btn.disabled = true; estado.textContent = "En cola…";
+  const tramo = c.duracion * c.velocidad, t0 = Date.now();
+  try{
+    const r = await jpost("/api/subtitular-video", {origen:c.origen, entrada:c.entrada, duracion:tramo, modelo:$("#subs-modelo").value,
+      idioma:$("#subs-idioma").value});
+    const fin = await esperarTrabajo(r.trabajo, t => {
+      const seg = (Date.now() - t0) / 1000;
+      estado.textContent = t.cola ? "Esperando turno (otro video en proceso)…" : "Transcribiendo… " + Math.round(seg) + " s";
+      barra.firstElementChild.style.width = (t.cola ? 3 : Math.min(92, 8 + seg / Math.max(tramo, 5) * 60)) + "%";
+    });
+    barra.firstElementChild.style.width = "100%";
+    ponerSubtitulos(c, fin.grupos || [], $("#subs-estilo").value, +$("#subs-y").value);
+    estado.textContent = (fin.palabras || []).length + " palabras en " + (fin.grupos || []).length + " subtítulos.";
+  }catch(e){ estado.textContent = "No se pudo: " + e.message; toast("Subtítulos: " + e.message); }
+  btn.disabled = false; setTimeout(() => barra.classList.add("oculto"), 1500);
+};
+function ponerSubtitulos(c, grupos, estilo, y){
+  let pistaId = (P.pistas.find(p => p.tipo === "texto" && /subt/i.test(p.nombre || "")) || {}).id;
+  if(!pistaId){ pistaId = nuevaPista("texto"); pista(pistaId).nombre = "Subtítulos"; }
+  const v = c.velocidad, ini = c.inicio, fin = finClip(c);
+  // Lo que ya hubiera en esa pista dentro del clip se reemplaza.
+  P.clips = P.clips.filter(x => !(x.pista === pistaId && x.inicio < fin && finClip(x) > ini));
+  grupos.forEach((g, k) => {
+    if(!g.length) return;
+    const a = ini + g[0].i / v, sig = grupos[k + 1];
+    const b = Math.min(fin, ini + (sig && sig.length ? Math.min(sig[0].i, g[g.length - 1].f + 0.6) : g[g.length - 1].f + 0.3) / v);
+    if(b - a < 0.05 || a >= fin) return;
+    P.clips.push(clipBase("texto", {pista:pistaId, inicio:a, duracion:b - a,
+      texto:{estilo:"subtitulo", contenido:"", resaltado:estilo === "palabra" ? "palabra" : null, x:0.5, y, tam:0, color:null, caja:false, alinear:null,
+        palabras:g.map(p => ({p:p.p, i:(p.i - g[0].i) / v, f:(p.f - g[0].i) / v}))}}));
+  });
+  U.sel = new Set(); cambio();
+}
+
+/* ---------------- Paneles: proyecto y formato ---------------- */
+function pintarAspectos(){
+  $("#aspectos").innerHTML = Object.entries(ASPECTOS).map(([k, a]) => `<button data-a="${k}" title="${a.sub}" class="${k === P.aspecto ? "on" : ""}">${a.nombre}</button>`).join("");
+  $$("#aspectos button").forEach(b => b.onclick = () => { aplicarAspecto(b.dataset.a); pintarAspectos(); ajustarVisor(); pintarMarca(); cambio(); });
+}
+function pintarProyecto(){
+  $("#pr-nombre").value = P.nombre || ""; $("#pr-res").value = String(P.res || 1080); $("#pr-fps").value = String(P.fps);
+  $("#pr-tam").textContent = P.ancho + " × " + P.alto;
+  $("#nombre-proyecto").textContent = P.nombre || "Sin título";
+}
+$("#pr-nombre").onchange = ev => { P.nombre = ev.target.value.trim(); pintarProyecto(); cambio(); };
+$("#pr-res").onchange = ev => { aplicarAspecto(P.aspecto, +ev.target.value); pintarProyecto(); ajustarVisor(); cambio(); };
+$("#pr-fps").onchange = ev => { P.fps = +ev.target.value; cambio(); };
+$$("[data-pista]").forEach(b => b.onclick = () => nuevaPista(b.dataset.pista));
+$("#b-nuevo").onclick = () => { if(P.clips.length && !confirm("¿Empezar un proyecto nuevo? Lo actual sigue en «Abrir» si lo guardaste.")) return;
+  for(const id of [...ELS.keys()]) liberar(id); P = proyectoNuevo(); U.sel = new Set(); U.t = 0; Hist.reiniciar(); refrescarTodo(); cambio(); };
+$$("#pestanas-izq .est-pestana").forEach(b => b.onclick = () => {
+  $$("#pestanas-izq .est-pestana").forEach(x => x.classList.toggle("on", x === b));
+  ["medios", "texto", "marca", "subs", "proyecto"].forEach(p => $("#p-" + p).classList.toggle("oculto", p !== b.dataset.p));
+  if(b.dataset.p === "proyecto") pintarProyecto();
+});
+function pintarEstado(){
+  $("#est-formato").innerHTML = `<b>${P.ancho}×${P.alto}</b> · ${P.fps} cuadros/s`;
+  $("#est-duracion").innerHTML = `Duración <b>${fmtT(duracionTotal())}</b>`;
+  $("#est-herr").textContent = (VCFG.ffmpeg ? "ffmpeg listo" : "sin ffmpeg") + " · " + (VCFG.whisper ? "Whisper listo" : "sin Whisper");
+}
+function refrescarTodo(){ pintarAspectos(); pintarProyecto(); ajustarVisor(); pintarLinea(); pintarPropiedades(); pintarMarca(); pintarEstado();
+  for(const c of P.clips) if(c.origen) sondear(c.origen).then(() => { if(c.tipo !== "imagen") onda(c.origen); pedirCuadro(); }); }
+
+/* ---------------- Guardar, abrir y autoguardado ---------------- */
+const CLAVE_AUTO = "video_autoguardado";
+const Guardado = {
+  h:0,
+  programar(){ clearTimeout(this.h); this.estado("Cambios sin guardar…"); this.h = setTimeout(() => this.ahora(), 2500); },
+  async ahora(){
+    try{ await jpost("/api/almacen", {clave:CLAVE_AUTO, datos:{proyecto:P, fecha:new Date().toISOString()}}); this.estado("Autoguardado " + new Date().toLocaleTimeString().slice(0, 5)); }
+    catch(e){ this.estado("¡No se pudo autoguardar!"); }
+  },
+  estado(t){ $("#est-guardado b").textContent = t; },
+};
+const nombreArchivo = () => "video-" + ((P.nombre || "sin-titulo").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "sin-titulo");
+async function guardarProyecto(){
+  if(!P.nombre){ const n = prompt("Nombre del proyecto", "Video " + new Date().toLocaleDateString()); if(!n) return; P.nombre = n.trim(); pintarProyecto(); }
+  try{ await jpost("/api/proyecto-media", {nombre:nombreArchivo(), datos:{tipo:"video", v:1, proyecto:P}}); U.sucio = false; toast("Proyecto guardado: " + P.nombre); }
+  catch(e){ toast("No se pudo guardar: " + e.message); }
+}
+$("#b-guardar").onclick = guardarProyecto;
+$("#b-abrir").onclick = async () => {
+  let lista = []; try{ lista = (await jget("/api/proyectos-media")).filter(p => p.nombre.startsWith("video-")); }catch(_){ }
+  abrirModal(`<h3>Abrir proyecto de video</h3>
+    <div style="max-height:50vh;overflow:auto;display:flex;flex-direction:column;gap:4px">${lista.map(p => `<button class="est-boton est-boton--borde boton-bloque" data-py="${esc(p.nombre)}">${icono("pelicula")}<span>${esc(p.nombre.replace(/^video-/, ""))}<small>${esc(p.fecha)}</small></span></button>`).join("")
+      || `<div class="vacio">Aún no hay proyectos de video guardados.</div>`}</div>
+    <div class="pie-modal"><button class="est-boton" onclick="cerrarModal()">Cerrar</button></div>`);
+  $$("#modal [data-py]").forEach(b => b.onclick = async () => {
+    try{ const d = await jget("/api/proyecto-media?nombre=" + encodeURIComponent(b.dataset.py));
+      cargarProyecto(d.datos.proyecto); cerrarModal(); toast("Proyecto abierto"); }catch(e){ toast("No se pudo abrir: " + e.message); }
+  });
+};
+function cargarProyecto(datos){
+  for(const id of [...ELS.keys()]) liberar(id);
+  P = Object.assign(proyectoNuevo(), datos); P.clips = (P.clips || []).map(c => Object.assign(clipBase(c.tipo), c));
+  U.sel = new Set(); U.t = 0; Hist.reiniciar(); refrescarTodo(); setTimeout(ajustarZoom, 300);
+}
+function abrirModal(html){ $("#modal").innerHTML = html; $("#modal-fondo").classList.add("on"); estudioIconos($("#modal")); }
+window.cerrarModal = () => $("#modal-fondo").classList.remove("on");
+$("#modal-fondo").addEventListener("click", ev => { if(ev.target.id === "modal-fondo" && !$("#modal").dataset.ocupado) cerrarModal(); });
+</script>
+<script>
+"use strict";
+/* ---------------- Exportar ---------------- */
+/* (a) En esta computadora: el proyecto viaja como JSON y servidor/montaje.py arma la orden de ffmpeg
+       (cola de un ffmpeg a la vez, nice, tiempo máximo); el MP4 cae en prensa/redes/<canal>.
+   (b) En el navegador: el servidor da el MISMO plan con nombres de un sistema de archivos virtual y
+       ffmpeg.wasm (vendor/ffmpeg, un solo hilo) lo ejecuta aquí; se carga solo al elegirlo. */
+const LIMITE_NAVEGADOR_S = 60;
+function canalSugerido(){ const r = P.ancho / P.alto;
+  return Math.abs(r - 9 / 16) < 0.06 ? "tiktok" : r > 1.5 ? "youtube" : "instagram"; }
+$("#b-exportar").onclick = () => {
+  const total = duracionTotal();
+  if(total <= 0.04){ toast("La línea de tiempo está vacía"); return; }
+  const redes = Object.entries(VCFG.redes || {});
+  const canales = VCFG.canales && VCFG.canales.length ? VCFG.canales : ["facebook", "instagram", "tiktok", "estados", "x", "youtube", "linkedin", "transmisiones"];
+  const cs = canalSugerido();
+  abrirModal(`<h3>Exportar video (MP4 H.264 + AAC)</h3>
+    <div class="est-fila"><label>Dónde</label><div class="est-segmentado" id="x-donde">
+      <button class="on" data-d="servidor">Esta computadora</button><button data-d="navegador">Navegador</button></div></div>
+    <div class="est-fila"><label>Nombre</label><input type="text" id="x-nombre" value="${esc(nombreArchivo().replace(/^video-/, ""))}"></div>
+    <div class="est-fila"><label>Red</label><select id="x-red"><option value="">Sin límite</option>${redes.map(([k, r]) => `<option value="${k}">${esc(r.nombre)} (hasta ${r.max_s} s)</option>`).join("")}</select></div>
+    <div class="est-fila"><label>Canal</label><select id="x-canal">${canales.map(c => `<option value="${c}" ${c === cs ? "selected" : ""}>${c}</option>`).join("")}</select></div>
+    <div class="est-fila"><label>Calidad</label><select id="x-calidad"><option value="alta">Alta (más lento)</option><option value="rapida">Rápida</option></select></div>
+    <label class="est-fila"><input type="checkbox" id="x-lufs" checked> Sonoridad a ${(VCFG.sonoridad || {}).lufs ?? -14} LUFS (como los cortes de shorts.py)</label>
+    <div id="x-avisos"></div>
+    <div class="barra-progreso oculto" id="x-barra" style="margin-top:10px"><i></i></div>
+    <div class="est-nota" id="x-estado" style="margin-top:6px">${P.ancho}×${P.alto} · ${P.fps} cuadros/s · ${fmtT(total)}</div>
+    <div id="x-resultado"></div>
+    <div class="pie-modal"><button class="est-boton" id="x-cerrar">Cerrar</button><button class="est-boton est-boton--primario" id="x-ir">${icono("descargar")}Exportar</button></div>`);
+  let donde = "servidor";
+  const avisos = () => {
+    const red = (VCFG.redes || {})[$("#x-red").value], out = [];
+    if(red && total > red.max_s) out.push(`Dura ${Math.round(total)} s: ${red.nombre} admite hasta ${red.max_s} s.`);
+    if(donde === "navegador"){
+      out.push("El navegador descarga ffmpeg.wasm (31 MB) la primera vez y compone con un solo núcleo: es varias veces más lento que en esta computadora y puede agotar la memoria de un teléfono.");
+      if(total > LIMITE_NAVEGADOR_S) out.push(`Este video dura ${Math.round(total)} s: en el navegador conviene hasta ${LIMITE_NAVEGADOR_S} s.`);
+    }else if(!VCFG.ffmpeg) out.push("ffmpeg no está instalado en esta computadora: exporta en el navegador.");
+    $("#x-avisos").innerHTML = out.map(t => `<div class="est-caja-aviso" style="margin-top:6px">${icono("aviso")}<span>${esc(t)}</span></div>`).join("");
+  };
+  $$("#x-donde button").forEach(b => b.onclick = () => { donde = b.dataset.d; $$("#x-donde button").forEach(x => x.classList.toggle("on", x === b)); avisos(); });
+  const red0 = {tiktok:"tiktok", instagram:"reels", facebook:"facebook", estados:"estados", youtube:"shorts"}[cs];
+  if(red0 && P.alto > P.ancho && (VCFG.redes || {})[red0]) $("#x-red").value = red0;
+  $("#x-red").onchange = avisos; avisos();
+  $("#x-cerrar").onclick = () => { if($("#modal").dataset.ocupado){ toast("Espera a que termine la exportación"); return; } cerrarModal(); };
+  $("#x-ir").onclick = async () => {
+    const op = {nombre:($("#x-nombre").value || "video").trim(), canal:$("#x-canal").value, calidad:$("#x-calidad").value, normalizar:$("#x-lufs").checked};
+    $("#x-ir").disabled = true; $("#modal").dataset.ocupado = "1"; $("#x-barra").classList.remove("oculto");
+    try{ donde === "servidor" ? await exportarServidor(op) : await exportarNavegador(op); }
+    catch(e){ $("#x-estado").textContent = "No se pudo exportar: " + e.message; }
+    delete $("#modal").dataset.ocupado; $("#x-ir").disabled = false;
+  };
+};
+function progreso(frac, texto){ $("#x-barra").firstElementChild.style.width = Math.round(clamp(frac, 0, 1) * 100) + "%"; if(texto) $("#x-estado").textContent = texto; }
+async function exportarServidor(op){
+  progreso(0.01, "Enviando el proyecto…");
+  const r = await jpost("/api/exportar-proyecto-video", {proyecto:P, ...op});
+  const fin = await esperarTrabajo(r.trabajo, t => progreso(t.progreso || 0,
+    t.cola ? "En cola: hay otro video componiéndose…" : "Componiendo con ffmpeg… " + Math.round((t.progreso || 0) * 100) + " %"));
+  progreso(1, "Listo: " + fin.archivo);
+  $("#x-resultado").innerHTML = `<div class="est-caja-exito" style="margin-top:8px">${icono("exito")}<span>Guardado en prensa/redes (${esc(op.canal)}).
+    <a class="est-boton est-boton--sm est-boton--borde" href="${esc(fin.url)}" target="_blank" rel="noopener">${icono("vista-previa")}Ver</a>
+    <a class="est-boton est-boton--sm est-boton--borde" href="${esc(fin.url)}" download="${esc(fin.archivo)}">${icono("descargar")}Descargar</a>
+    <span id="x-fototeca"></span></span></div>`;
+  ofrecerFototeca({trabajo:r.trabajo, url:fin.url, archivo:fin.archivo}, op);
+}
+/* «Guardar en la Fototeca»: solo si el estudio está integrado a Qillqa (/api/health trae fototeca:true, lo añade
+   su proxy). Contrato en servidor/README.md §Fototeca: POST api/fototeca-video {trabajo, url, archivo, titulo,
+   duracion, ancho, alto, canal}; lo atiende Qillqa, no este servidor. Un 404 = Qillqa aún no recibe videos. */
+async function ofrecerFototeca(hecho, op){
+  let salud = {};
+  try{ salud = await jget("/api/health"); }catch(_){ }
+  const lugar = $("#x-fototeca"); if(!lugar || salud.fototeca !== true) return;
+  lugar.innerHTML = `<button class="est-boton est-boton--sm est-boton--borde" id="x-a-fototeca">${icono("subir")}Guardar en la Fototeca</button>`;
+  $("#x-a-fototeca").onclick = async () => {
+    const b = $("#x-a-fototeca"); b.disabled = true;
+    const titulo = (P.nombre || op.nombre || hecho.archivo || "Video").replace(/^video-/, "");
+    try{
+      const r = await fetch(api("/api/fototeca-video"), {method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({trabajo:hecho.trabajo || null, url:hecho.url || null, archivo:hecho.archivo || null, titulo,
+          duracion:+duracionTotal().toFixed(2), ancho:P.ancho, alto:P.alto, canal:op.canal || null})});
+      if(r.status === 404 || r.status === 405 || r.status === 501){
+        lugar.innerHTML = `<span class="est-nota">La Fototeca todavía no recibe videos desde el estudio; quedó guardado en prensa/redes.</span>`; return; }
+      const d = await r.json().catch(() => ({}));
+      if(!r.ok || d.ok === false) throw new Error(d.error || d.detail || ("HTTP " + r.status));
+      lugar.innerHTML = `<span class="est-nota">${icono("exito", "ico--sm")}En la Fototeca${d.numero ? " (n.º " + esc(d.numero) + ")" : ""}.</span>`;
+    }catch(e){ b.disabled = false; toast("No se pudo guardar en la Fototeca: " + e.message); }
+  };
+}
+let FFW = null;   // ffmpeg.wasm ya cargado (se reutiliza entre exportaciones)
+async function exportarNavegador(op){
+  progreso(0.01, "Preparando el plan…");
+  const plan = await jpost("/api/plan-video", {proyecto:P, normalizar:op.normalizar});
+  const abs = p => new URL(api(p), location.href).href;
+  if(!FFW){
+    progreso(0.02, "Cargando ffmpeg.wasm (31 MB, solo la primera vez)…");
+    const {FFmpeg} = await import(abs("vendor/ffmpeg/ffmpeg/index.js"));
+    const util = await import(abs("vendor/ffmpeg/util/index.js"));
+    const ff = new FFmpeg();
+    await ff.load({coreURL:abs("vendor/ffmpeg/core/ffmpeg-core.js"), wasmURL:abs("vendor/ffmpeg/core/ffmpeg-core.wasm")});
+    FFW = {ff, util};
+  }
+  const {ff, util} = FFW;
+  let ultimo = "";
+  const alLog = ({message}) => { ultimo = message;
+    const m = /time=\s*(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(message);
+    if(m) progreso(0.1 + 0.88 * ((+m[1]) * 3600 + (+m[2]) * 60 + (+m[3])) / plan.duracion, "Componiendo en el navegador… " + Math.round(100 * ((+m[1]) * 3600 + (+m[2]) * 60 + (+m[3])) / plan.duracion) + " %"); };
+  ff.on("log", alLog);
+  try{
+    for(const d of ["/in", "/out", "/trabajo", "/fuentes"]) try{ await ff.createDir(d); }catch(_){ }
+    let i = 0;
+    for(const e of plan.entradas){ progreso(0.03 + 0.06 * (i++ / Math.max(1, plan.entradas.length)), "Cargando medios " + i + "/" + plan.entradas.length + "…");
+      await ff.writeFile(e.nombre, await util.fetchFile(e.url)); }
+    for(const f of plan.fuentes) await ff.writeFile(f.nombre, await util.fetchFile(f.url));
+    if(plan.ass) await ff.writeFile("/trabajo/titulos.ass", new TextEncoder().encode(plan.ass));
+    const rc = await ff.exec(plan.args);
+    if(rc !== 0) throw new Error("ffmpeg.wasm terminó con código " + rc + (ultimo ? ": " + ultimo : ""));
+    const datos = await ff.readFile("/out/salida.mp4");
+    for(const e of plan.entradas) try{ await ff.deleteFile(e.nombre); }catch(_){ }
+    try{ await ff.deleteFile("/out/salida.mp4"); }catch(_){ }
+    const blob = new Blob([datos.buffer], {type:"video/mp4"}), url = URL.createObjectURL(blob);
+    const archivo = op.nombre.replace(/\.mp4$/i, "") + ".mp4";
+    progreso(1, "Listo en el navegador (" + (blob.size / 1048576).toFixed(1) + " MB).");
+    $("#x-resultado").innerHTML = `<div class="est-caja-exito" style="margin-top:8px">${icono("exito")}<span>
+      <a class="est-boton est-boton--sm est-boton--borde" href="${url}" download="${esc(archivo)}">${icono("descargar")}Descargar</a>
+      <button class="est-boton est-boton--sm est-boton--borde" id="x-al-banco">${icono("subir")}Guardar en el banco</button>
+      <span id="x-fototeca"></span></span></div>`;
+    $("#x-al-banco").onclick = async () => {
+      try{ const r = await fetch(api("/api/subir"), {method:"POST", headers:{"X-Nombre":encodeURIComponent(archivo), "Content-Type":"video/mp4"}, body:blob});
+        const d = await r.json(); if(!d.ok) throw new Error(d.error); toast("Guardado en el banco (subidas)"); cargarBanco();
+        ofrecerFototeca({url:d.url, archivo}, op); }
+      catch(e){ toast("No se pudo guardar: " + e.message); }
+    };
+  }finally{ ff.off("log", alLog); }
+}
+
+/* ---------------- Teclado ---------------- */
+document.addEventListener("keydown", ev => {
+  if(ev.target instanceof Element && ev.target.matches("input:not([type=range]):not([type=checkbox]),textarea,select")) return;
+  if($("#modal-fondo").classList.contains("on")){ if(ev.key === "Escape" && !$("#modal").dataset.ocupado) cerrarModal(); return; }
+  const ctrl = ev.ctrlKey || ev.metaKey, k = ev.key.toLowerCase(), cuadro = 1 / P.fps;
+  const hecho = () => ev.preventDefault();
+  if(ctrl && k === "z" && !ev.shiftKey){ hecho(); Hist.atras(); return; }
+  if(ctrl && (k === "y" || (k === "z" && ev.shiftKey))){ hecho(); Hist.adelante(); return; }
+  if(ctrl && k === "s"){ hecho(); guardarProyecto(); return; }
+  if(ctrl && k === "c"){ hecho(); copiar(false); return; }
+  if(ctrl && k === "x"){ hecho(); copiar(true); return; }
+  if(ctrl && k === "v"){ hecho(); pegar(); return; }
+  if(ctrl && k === "a"){ hecho(); U.sel = new Set(P.clips.map(c => c.id)); pintarLinea(); pintarPropiedades(); return; }
+  if(ctrl) return;
+  if(ev.key === " "){ hecho(); U.reproduciendo ? pausar() : reproducir(1); return; }
+  if(k === "k"){ hecho(); pausar(); return; }
+  if(k === "l"){ hecho(); reproducir(U.reproduciendo && U.velocidad > 0 ? Math.min(U.velocidad * 2, 8) : 1); return; }
+  if(k === "j"){ hecho(); reproducir(U.reproduciendo && U.velocidad < 0 ? Math.max(U.velocidad * 2, -8) : -1); return; }
+  if(ev.key === "ArrowLeft"){ hecho(); pausar(); irA(U.t - (ev.shiftKey ? 1 : cuadro), true); return; }
+  if(ev.key === "ArrowRight"){ hecho(); pausar(); irA(U.t + (ev.shiftKey ? 1 : cuadro), true); return; }
+  if(ev.key === "ArrowUp"){ hecho(); puntoEdicion(-1); return; }
+  if(ev.key === "ArrowDown"){ hecho(); puntoEdicion(1); return; }
+  if(ev.key === "Home"){ hecho(); irA(0, true); return; }
+  if(ev.key === "End"){ hecho(); irA(duracionTotal(), true); return; }
+  if(k === "s"){ hecho(); dividir(); return; }
+  if(ev.key === "Delete" || ev.key === "Backspace"){ hecho(); borrar(ev.shiftKey); return; }
+  if(k === "m"){ hecho(); marcador(); return; }
+  if(ev.key === "+" || ev.key === "="){ hecho(); zoomA(U.pps * 1.25); return; }
+  if(ev.key === "-" || ev.key === "_"){ hecho(); zoomA(U.pps / 1.25); return; }
+  if(k === "z"){ hecho(); ajustarZoom(); return; }
+  if(k === "r"){ hecho(); alternarOndulado(); return; }
+  if(ev.key === "Escape"){ U.sel = new Set(); pintarLinea(); pintarPropiedades(); pedirCuadro(); }
+});
+function alternarOndulado(){ U.ondulado = !U.ondulado; $("#b-ondulado").classList.toggle("on", U.ondulado);
+  $("#b-ondulado").setAttribute("aria-pressed", U.ondulado); toast(U.ondulado ? "Modo ondulado: recortar o borrar mueve lo que sigue" : "Modo normal"); }
+
+/* ---------------- Botones y arranque ---------------- */
+$("#b-play").onclick = () => U.reproduciendo ? pausar() : reproducir(1);
+$("#b-inicio").onclick = () => irA(0, true);
+$("#b-fin").onclick = () => irA(duracionTotal(), true);
+$("#b-deshacer").onclick = () => Hist.atras();
+$("#b-rehacer").onclick = () => Hist.adelante();
+$("#b-dividir").onclick = dividir;
+$("#b-borrar").onclick = ev => borrar(ev.shiftKey);
+$("#b-marcador").onclick = marcador;
+$("#b-iman").onclick = () => { U.iman = !U.iman; $("#b-iman").classList.toggle("on", U.iman); $("#b-iman").setAttribute("aria-pressed", U.iman); };
+$("#b-ondulado").onclick = alternarOndulado;
+$("#b-acercar").onclick = () => zoomA(U.pps * 1.25);
+$("#b-alejar").onclick = () => zoomA(U.pps / 1.25);
+$("#b-ajustar").onclick = ajustarZoom;
+$("#zoom").oninput = ev => zoomA(PPS_MIN * Math.pow(PPS_MAX / PPS_MIN, +ev.target.value));
+$("#calidad-vista").onchange = ev => { U.calidad = +ev.target.value; ajustarVisor(); };
+$("#tl-scroll").addEventListener("wheel", ev => { if(!(ev.ctrlKey || ev.metaKey)) return; ev.preventDefault();
+  const r = $("#tl-scroll").getBoundingClientRect(); const t = ($("#tl-scroll").scrollLeft + ev.clientX - r.left - CABEZA()) / U.pps;
+  zoomA(U.pps * (ev.deltaY < 0 ? 1.2 : 1 / 1.2), Math.max(0, t)); }, {passive:false});
+(function divisor(){
+  const d = $("#divisor"); let y0 = 0, h0 = 0;
+  d.addEventListener("pointerdown", ev => { d.setPointerCapture(ev.pointerId); y0 = ev.clientY; h0 = $("#linea").clientHeight;
+    d.onpointermove = e => { $("#app").style.setProperty("--alto-linea", clamp(h0 - (e.clientY - y0), 140, window.innerHeight - 260) + "px"); ajustarVisor(); };
+    d.onpointerup = () => { d.onpointermove = null; }; });
+})();
+new ResizeObserver(() => ajustarVisor()).observe($("#visor"));
+window.addEventListener("beforeunload", () => {
+  if(U.sucio && navigator.sendBeacon) navigator.sendBeacon(api("/api/almacen"),
+    new Blob([JSON.stringify({clave:CLAVE_AUTO, datos:{proyecto:P, fecha:new Date().toISOString()}})], {type:"application/json"}));
+});
+
+(async function arrancar(){
+  estudioIconos();
+  await cargarConfig();
+  pintarIdiomas();
+  await cargarBanco();
+  // Autoguardado: se recupera el último proyecto (está en el almacén durable del servidor).
+  try{
+    const a = await jget("/api/almacen"); const g = (a.claves || {})[CLAVE_AUTO];
+    if(g && g.proyecto && (g.proyecto.clips || []).length){ cargarProyecto(g.proyecto); toast("Se recuperó el último proyecto (autoguardado)"); }
+  }catch(_){ }
+  Hist.reiniciar();
+  refrescarTodo();
+  zoomA(U.pps);
+  // Desde media.html: «Editar en la línea de tiempo» abre aquí con ?medio=<url>.
+  const q = new URLSearchParams(location.search);
+  if(q.get("medio")) await agregarMedio(q.get("medio"), q.get("tipo") || null, q.get("nombre") || null, {t:duracionTotal()});
+  setTimeout(ajustarZoom, 400);
+  Guardado.estado(P.clips.length ? "Proyecto recuperado" : "Sin cambios");
+})();
+</script>
+</body>
+</html>
